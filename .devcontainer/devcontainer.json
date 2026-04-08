@@ -1,0 +1,25 @@
+{
+  "name": "ApproxiMPC_dev",
+  "dockerComposeFile": "../docker-compose.yaml",
+  "service": "app",
+  "workspaceFolder": "/app",
+  "shutdownAction": "stopCompose",
+  "remoteEnv": {
+    "ACADOS_SOURCE_DIR": "/opt/acados",
+    "LD_LIBRARY_PATH": "/opt/acados/lib:${containerEnv:LD_LIBRARY_PATH}"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/app/.venv/bin/python",
+        "python.terminal.activateEnvironment": true
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff"
+      ]
+    }
+  },
+  "postCreateCommand": "bash -lc 'uv sync --all-groups && . .venv/bin/activate && pip install -e /opt/acados/interfaces/acados_template'"
+}

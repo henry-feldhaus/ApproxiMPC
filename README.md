@@ -49,6 +49,53 @@ cd examples
 uv run python controller_example.py
 ```
 
+## Docker / Containerization
+
+For team portability and environment consistency, the project includes Docker and VS Code devcontainer support. **acados** is built automatically inside the container, eliminating local build dependencies.
+
+### Quick Start with Docker
+
+CPU-only (default, works on all systems):
+```bash
+docker compose build app
+docker compose run --rm app
+```
+
+GPU-enabled (NVIDIA driver required):
+```bash
+docker compose --profile gpu build app
+docker compose --profile gpu run --rm app-gpu
+```
+
+### VS Code DevContainer
+
+1. Install the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension.
+2. Open the repository in VS Code.
+3. Click the green **><** icon in the bottom-left corner and select **Reopen in Container**.
+4. The environment will build automatically on first open; subsequent opens are instant (uses persistent named volume for `.venv`).
+
+### Container Mount Strategy
+
+- Repository bind-mounted to `/app` (source of truth from compose).
+- Python virtual environment (`.venv/`) in a named volume for persistence across rebuilds.
+- X11 socket available for GUI rendering on Linux/X11 systems (e.g., pygame, PyQt).
+- DISPLAY environment variable auto-forwarded.
+
+### Inside the Container
+
+All commands are identical to local development.
+
+Run an MPC example:
+```bash
+cd examples
+uv run python kmpc_race_example.py
+```
+
+Run tests:
+```bash
+MPLBACKEND=Agg uv run pytest -q
+```
+
 ## Additional Dependencies
 
 MPC controllers require dependencies that cannot be installed via pip alone. For the reference MPC implementation see the ForzaETH [race_stack](https://github.com/ForzaETH/race_stack)
@@ -87,22 +134,6 @@ For example, train a racing model with:
 
 ```bash
 uv run python train/ppo_race.py --m t
-```
-
-Quick training functionality smoke test (short run):
-
-```bash
-uv run python - <<'PY'
-import gymnasium as gym
-from stable_baselines3 import PPO
-from train.config.env_config import get_drift_train_config, get_env_id
-
-env = gym.make(get_env_id(), config=get_drift_train_config())
-model = PPO("MlpPolicy", env, n_steps=32, batch_size=32, verbose=0)
-model.learn(total_timesteps=128, progress_bar=False)
-env.close()
-print("Training smoke test passed")
-PY
 ```
 
 Detailed usage guidelines are at the top of the training script files.

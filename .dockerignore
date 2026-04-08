@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+.devcontainer
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+build
+dist
+htmlcov
+figures
+assets/analysis
