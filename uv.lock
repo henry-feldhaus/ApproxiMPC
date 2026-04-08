@@ -1165,12 +1165,9 @@ dependencies = [
     { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "onnx" },
     { name = "opencv-python" },
     { name = "pillow" },
     { name = "pygame" },
-    { name = "pyqt6" },
-    { name = "pyqtgraph" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1194,6 +1191,13 @@ docs = [
     { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "sphinx-rtd-theme" },
 ]
+inference = [
+    { name = "onnx" },
+]
+render = [
+    { name = "pyqt6" },
+    { name = "pyqtgraph" },
+]
 train = [
     { name = "casadi" },
     { name = "lark" },
@@ -1211,12 +1215,9 @@ requires-dist = [
     { name = "gymnasium", specifier = ">=0.29.1,<0.30.0" },
     { name = "numba", specifier = ">=0.55.2" },
     { name = "numpy", specifier = ">=1.18" },
-    { name = "onnx", specifier = ">=1.20.1,<2.0.0" },
     { name = "opencv-python", specifier = ">=4.9.0.80,<5.0.0.0" },
     { name = "pillow", specifier = ">=9.0.1" },
     { name = "pygame", specifier = ">=2.5.2,<3.0.0" },
-    { name = "pyqt6", specifier = ">=6.7.1,<7.0.0" },
-    { name = "pyqtgraph", specifier = ">=0.13.7,<0.14.0" },
     { name = "pyyaml", specifier = ">=5.3.1" },
     { name = "requests", specifier = ">=2.31.0,<3.0.0" },
     { name = "scipy", specifier = ">=1.7.3" },
@@ -1236,6 +1237,11 @@ dev = [
 docs = [
     { name = "sphinx", specifier = ">=7.0" },
     { name = "sphinx-rtd-theme", specifier = ">=2.0" },
+]
+inference = [{ name = "onnx", specifier = ">=1.20.1,<2.0.0" }]
+render = [
+    { name = "pyqt6", specifier = ">=6.7.1,<7.0.0" },
+    { name = "pyqtgraph", specifier = ">=0.13.7,<0.14.0" },
 ]
 train = [
     { name = "casadi", specifier = ">=3.7.2,<4.0.0" },
@@ -2742,7 +2748,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess" },
+    { name = "ptyprocess", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten') or (python_full_version < '3.11' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [

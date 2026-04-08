@@ -34,25 +34,29 @@ pip install -e .
 ```
 
 ### Virtual Environment
-This project uses a virtual environment at `rl_env/`. Always activate it before running commands:
+This project uses a virtual environment at `.venv/` managed by `uv`.
+
+For shell-based workflows, activate it before running commands:
 ```bash
-source rl_env/bin/activate
+source .venv/bin/activate
 ```
+
+For tool-driven workflows (recommended), prefer `uv run <command>` and skip activation.
 
 ### Testing
 Run all tests:
 ```bash
-python3 -m pytest
+uv run pytest
 ```
 
 Run specific test file:
 ```bash
-python3 -m pytest tests/test_f110_env.py
+uv run pytest tests/test_f110_env.py
 ```
 
 Run specific test function:
 ```bash
-python3 -m pytest tests/test_f110_env.py::test_function_name -v
+uv run pytest tests/test_f110_env.py::test_function_name -v
 ```
 
 The CI runs pytest for Python versions 3.10-3.12.
@@ -60,27 +64,32 @@ The CI runs pytest for Python versions 3.10-3.12.
 ### Running Examples
 ```bash
 cd examples
-python3 waypoint_follow.py  # Pure Pursuit path following
-python3 p_steer_controller.py  # Simple P controller for centerline following
-python3 drift_debug.py  # Debug drift behavior with visualization
+uv run python waypoint_follow.py  # Pure Pursuit path following
+uv run python p_steer_controller.py  # Simple P controller for centerline following
+uv run python drift_debug.py  # Debug drift behavior with visualization
 ```
 
 ### Training Models
 Main training script with multiple modes:
 ```bash
 # Train a new model
-python train/ppo_race.py --m t
+uv run python train/ppo_race.py --m t
 
 # Evaluate a local model (uses latest wandb run if --path not specified)
-python train/ppo_race.py --m e
-python train/ppo_race.py --m e --path /path/to/model.zip
+uv run python train/ppo_race.py --m e
+uv run python train/ppo_race.py --m e --path /path/to/model.zip
 
 # Download model from wandb and evaluate
-python train/ppo_race.py --m d --run_id <wandb_run_id>
+uv run python train/ppo_race.py --m d --run_id <wandb_run_id>
 
 # Continue training from existing model
-python train/ppo_race.py --m c --path /path/to/model.zip --additional_timesteps 10000000
+uv run python train/ppo_race.py --m c --path /path/to/model.zip --additional_timesteps 10000000
 ```
+
+## Copilot Workflow Note
+
+This file exists for Claude-style tooling compatibility, but the repository's primary day-to-day automation is Copilot-first.
+Keep command examples manager-agnostic where practical and `uv`-first for all Python/package workflows.
 
 ### Formatting/Linting
 Uses `ruff` for formatting, linting, import sorting, and unused import removal.
