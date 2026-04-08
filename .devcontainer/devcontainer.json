@@ -11,8 +11,8 @@
   "customizations": {
     "vscode": {
       "settings": {
-        "python.defaultInterpreterPath": "/app/.venv/bin/python",
-        "python.terminal.activateEnvironment": true
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "python.terminal.activateEnvironment": false
       },
       "extensions": [
         "ms-python.python",
@@ -20,6 +20,5 @@
         "charliermarsh.ruff"
       ]
     }
-  },
-  "postCreateCommand": "bash -lc 'uv sync --all-groups && . .venv/bin/activate && pip install -e /opt/acados/interfaces/acados_template'"
+  }
 }

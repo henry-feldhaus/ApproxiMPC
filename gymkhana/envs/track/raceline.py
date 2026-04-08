@@ -295,8 +295,11 @@ class Raceline:
         if self.waypoint_render is None:
             self.waypoint_render = e.render_closed_lines(points, color=color, size=1)
         else:
-            # PyQt renderer supports updateItems, Pygame may not
-            if hasattr(self.waypoint_render, "updateItems"):
+            # Newer pyqtgraph versions work reliably via setData(points)
+            if hasattr(self.waypoint_render, "setData"):
+                self.waypoint_render.setData(points)
+            # Keep compatibility with renderers exposing updateItems only.
+            elif hasattr(self.waypoint_render, "updateItems"):
                 self.waypoint_render.updateItems(points)
             else:
                 # For Pygame renderer, re-render

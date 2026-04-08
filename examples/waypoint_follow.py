@@ -200,7 +200,10 @@ class PurePursuitPlanner:
             if self.local_plan_render is None:
                 self.local_plan_render = e.render_lines(points, color=(0, 128, 0), size=1)
             else:
-                self.local_plan_render.updateItems(points)
+                if hasattr(self.local_plan_render, "setData"):
+                    self.local_plan_render.setData(points)
+                else:
+                    self.local_plan_render.updateItems(points)
 
     def _get_current_waypoint(self, waypoints, lookahead_distance, position, theta) -> Tuple[np.ndarray, int]:
         """
@@ -326,6 +329,8 @@ def main():
         obs, step_reward, done, truncated, info = env.step(action)
         laptime += step_reward
         frame = env.render()
+        # Keep rendering human-observable instead of running as fast as possible.
+        time.sleep(0.01)
 
     print("Sim elapsed time:", laptime, "Real elapsed time:", time.time() - start)
 
