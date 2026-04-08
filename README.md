@@ -23,13 +23,13 @@ Install the gym environment from PyPI with:
 pip install gymkhana
 ```
 
-Alternatively, to use all features, or for development (training, controllers, analysis, etc.), clone the full repo and install dependencies using `poetry`:
+Alternatively, to use all features, or for development (training, controllers, analysis, etc.), clone the full repo and install dependencies using `uv`:
 
 ```bash
 git clone --recurse-submodules https://github.com/TeoIlie/Gym-Khana.git
 cd Gym-Khana
-poetry install --all-groups
-source $(poetry env info -p)/bin/activate # or instead of sourcing, prefix commands with `poetry run`
+uv sync --all-groups
+source .venv/bin/activate # or, instead of sourcing, prefix commands with `uv run`
 ```
 
 Then you're off to the races! 🏎️
@@ -68,7 +68,7 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/software/acados/lib
 
 ```
 
-Next, install the `acados_template` inside your virtual environment, with editable mode. For example, open a shell inside the virtual env with `poetry shell` and then run the following command:
+Next, install the `acados_template` inside your virtual environment, with editable mode. For example, after `uv sync`, run the following command:
 
 ```bash
 # Python interface

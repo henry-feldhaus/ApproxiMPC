@@ -25,12 +25,12 @@ The simulator models realistic vehicle dynamics, sensor data (LiDAR), and racing
 
 ### Installation
 ```bash
-# With pip (recommended for this project)
-pip install -e .
+# With uv (recommended for this project)
+uv sync --all-groups
+source .venv/bin/activate
 
-# Or with poetry
-poetry install
-source $(poetry env info -p)/bin/activate
+# Or with pip editable install
+pip install -e .
 ```
 
 ### Virtual Environment

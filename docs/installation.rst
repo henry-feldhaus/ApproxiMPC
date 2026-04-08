@@ -23,13 +23,13 @@ Using pip (recommended)
    cd Gym-Khana
    pip install -e .
 
-Using poetry
-------------
+Using uv (recommended)
+----------------------
 
 .. code:: bash
 
-   poetry install
-   source $(poetry env info -p)/bin/activate  # or prefix commands with `poetry run`
+   uv sync --all-groups
+   source .venv/bin/activate  # or prefix commands with ``uv run``
 
 .. _additional-dependencies:
 

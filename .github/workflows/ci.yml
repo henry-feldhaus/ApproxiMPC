@@ -34,14 +34,15 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: ${{ matrix.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
         
     - name: Install
       run: |
-        python -m pip install --upgrade pip
-        pip install poetry
-        poetry install --all-groups
+        uv sync --all-groups
     
     - name: Test with pytest
       run: |
-        poetry run pytest
+        uv run pytest
 

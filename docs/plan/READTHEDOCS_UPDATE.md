@@ -8,7 +8,7 @@ The `docs/` directory contains outdated Sphinx documentation inherited from the 
 ```
 docs/
   index.rst              -- New landing page with features, demo GIF, toctree
-  installation.rst       -- Rewrite: pip, poetry, docker, acados (README §Quickstart + §Additional Dependencies)
+  installation.rst       -- Rewrite: pip, uv, docker, acados (README §Quickstart + §Additional Dependencies)
   quickstart.rst         -- NEW: running examples + basic simulation loop code
   configuration.rst      -- Rewrite: all config options (README §Configuration, §Reset, §Debugging, §Maps)
   training.rst           -- NEW: ppo_race/recover, modes, CL, callbacks, wandb (README §Training + §CL + §Wandb)
