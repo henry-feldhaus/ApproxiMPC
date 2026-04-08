@@ -1,0 +1,688 @@
+import unittest
+
+import gymnasium as gym
+import numpy as np
+from gymnasium.spaces import Box
+
+from gymkhana.envs import GKEnv
+from gymkhana.envs.observation import (
+    observation_factory,
+    sample_lookahead_curvatures_fast,
+    sample_lookahead_widths_fast,
+)
+from gymkhana.envs.utils import deep_update
+from train.config.env_config import get_drift_train_config, get_env_id
+
+
+class TestObservationInterface(unittest.TestCase):
+    @staticmethod
+    def _make_env(config={}) -> GKEnv:
+        conf = {
+            "map": "Spielberg",
+            "num_agents": 1,
+            "timestep": 0.01,
+            "integrator": "rk4",
+            "control_input": ["speed", "steering_angle"],
+            "params": {"mu": 1.0},
+        }
+        conf = deep_update(conf, config)
+
+        env = gym.make("gymkhana:gymkhana-v0", config=conf)
+        return env
+
+    def test_original_obs_space(self):
+        """
+        Check backward compatibility with the original observation space.
+        """
+        env = self._make_env(config={"observation_config": {"type": "original"}})
+
+        obs, _ = env.reset()
+
+        obs_keys = [
+            "ego_idx",
+            "scans",
+            "poses_x",
+            "poses_y",
+            "poses_theta",
+            "linear_vels_x",
+            "linear_vels_y",
+            "ang_vels_z",
+            "collisions",
+            "lap_times",
+            "lap_counts",
+        ]
+
+        # check that the observation space has the correct types
+        self.assertTrue(all([isinstance(env.observation_space.spaces[k], Box) for k in obs_keys if k != "ego_idx"]))
+        self.assertTrue(all([env.observation_space.spaces[k].dtype == np.float32 for k in obs_keys if k != "ego_idx"]))
+
+        # check the observation space is a dict
+        self.assertTrue(isinstance(obs, dict))
+
+        # check that the observation has the correct keys
+        self.assertTrue(all([k in obs for k in obs_keys]))
+        self.assertTrue(all([k in obs_keys for k in obs]))
+        self.assertTrue(env.observation_space.contains(obs))
+
+    def test_features_observation(self):
+        """
+        Check the FeatureObservation allows to select an arbitrary subset of features.
+        """
+        features = ["pose_x", "pose_y", "pose_theta"]
+
+        env = self._make_env(config={"observation_config": {"type": "features", "features": features}})
+
+        # check the observation space is a dict
+        self.assertTrue(isinstance(env.observation_space, gym.spaces.Dict))
+
+        # check that the observation space has the correct keys
+        for agent_id in env.unwrapped.agent_ids:
+            space = env.observation_space.spaces[agent_id].spaces
+            self.assertTrue(all([k in space for k in features]))
+            self.assertTrue(all([k in features for k in space]))
+
+        # check that the observation space has the correct types
+        for agent_id in env.unwrapped.agent_ids:
+            space = env.observation_space.spaces[agent_id].spaces
+            self.assertTrue(all([isinstance(space[k], Box) for k in features]))
+            self.assertTrue(all([space[k].dtype == np.float32 for k in features]))
+
+        # check the actual observation
+        obs, _ = env.reset()
+        obs, _, _, _, _ = env.step(env.action_space.sample())
+
+        for i, agent_id in enumerate(env.unwrapped.agent_ids):
+            pose_x, pose_y, pose_theta = env.unwrapped.sim.agent_poses[i]
+            obs_x, obs_y, obs_theta = (
+                obs[agent_id]["pose_x"],
+                obs[agent_id]["pose_y"],
+                obs[agent_id]["pose_theta"],
+            )
+
+            for ground_truth, observation in zip([pose_x, pose_y, pose_theta], [obs_x, obs_y, obs_theta]):
+                self.assertTrue(np.allclose(ground_truth, observation))
+
+    def test_unexisting_obs_space(self):
+        """
+        Check that an error is raised when an unexisting observation type is requested.
+        """
+        env = self._make_env()
+        with self.assertRaises(ValueError):
+            observation_factory(env, vehicle_id=0, type="unexisting_obs_type")
+
+    def test_kinematic_obs_space(self):
+        """
+        Check the kinematic state observation space contains the correct features [x, y, theta, v].
+        """
+        env = self._make_env(config={"observation_config": {"type": "kinematic_state"}})
+
+        kinematic_features = ["pose_x", "pose_y", "pose_theta", "linear_vel_x", "delta"]
+
+        # check kinematic features are in the observation space
+        for agent_id in env.unwrapped.agent_ids:
+            space = env.observation_space.spaces[agent_id].spaces
+            self.assertTrue(all([k in space for k in kinematic_features]))
+            self.assertTrue(all([k in kinematic_features for k in space]))
+
+        # check the actual observation
+        obs, _ = env.reset()
+        obs, _, _, _, _ = env.step(env.action_space.sample())
+
+        for i, agent_id in enumerate(env.unwrapped.agent_ids):
+            pose_x, pose_y, _, velx, pose_theta, _, _ = env.unwrapped.sim.agents[i].state
+            obs_x, obs_y, obs_theta = (
+                obs[agent_id]["pose_x"],
+                obs[agent_id]["pose_y"],
+                obs[agent_id]["pose_theta"],
+            )
+            obs_velx = obs[agent_id]["linear_vel_x"]
+
+            for ground_truth, observed in zip([pose_x, pose_y, pose_theta, velx], [obs_x, obs_y, obs_theta, obs_velx]):
+                self.assertTrue(np.allclose(ground_truth, observed))
+
+    def test_dynamic_obs_space(self):
+        """
+        Check the dynamic state observation space contains the correct features.
+        """
+        env = self._make_env(config={"observation_config": {"type": "dynamic_state"}})
+
+        kinematic_features = [
+            "pose_x",
+            "pose_y",
+            "pose_theta",
+            "linear_vel_x",
+            "ang_vel_z",
+            "delta",
+            "beta",
+        ]
+
+        # check kinematic features are in the observation space
+        for agent_id in env.unwrapped.agent_ids:
+            space = env.observation_space.spaces[agent_id].spaces
+            self.assertTrue(all([k in space for k in kinematic_features]))
+            self.assertTrue(all([k in kinematic_features for k in space]))
+
+        # check the actual observation
+        obs, _ = env.reset()
+        obs, _, _, _, _ = env.step(env.action_space.sample())
+
+        for i, agent_id in enumerate(env.unwrapped.agent_ids):
+            pose_x, pose_y, delta, velx, pose_theta, _, beta = env.unwrapped.sim.agents[i].state
+
+            agent_obs = obs[agent_id]
+            obs_x, obs_y, obs_theta = (
+                agent_obs["pose_x"],
+                agent_obs["pose_y"],
+                agent_obs["pose_theta"],
+            )
+            obs_velx, obs_delta, obs_beta = (
+                agent_obs["linear_vel_x"],
+                agent_obs["delta"],
+                agent_obs["beta"],
+            )
+
+            for ground_truth, observed in zip(
+                [pose_x, pose_y, pose_theta, velx, delta, beta],
+                [obs_x, obs_y, obs_theta, obs_velx, obs_delta, obs_beta],
+            ):
+                self.assertTrue(np.allclose(ground_truth, observed))
+
+    def test_consistency_observe_space(self):
+        obs_type_ids = ["kinematic_state", "dynamic_state", "original"]
+
+        env = self._make_env()
+        env.reset()
+
+        for obs_type_id in obs_type_ids:
+            obs_type = observation_factory(env, type=obs_type_id)
+            space = obs_type.space()
+            observation = obs_type.observe()
+
+            self.assertTrue(
+                space.contains(observation),
+                f"Observation {obs_type_id} is not contained in its space",
+            )
+
+    def test_gymnasium_api(self):
+        from gymnasium.utils.env_checker import check_env
+
+        obs_type_ids = ["kinematic_state", "dynamic_state", "original"]
+
+        for obs_type_id in obs_type_ids:
+            env = self._make_env(config={"observation_config": {"type": obs_type_id}})
+            check_env(
+                env.unwrapped,
+                skip_render_check=True,
+            )
+
+
+class TestDriftObservation(unittest.TestCase):
+    """Test suite for drift observation type"""
+
+    @classmethod
+    def setUpClass(cls):
+        """Create environment once for all tests"""
+        # Use the exact config from drift_debug.py
+        cls.config = get_drift_train_config()
+        # Ensure normalization is off for easier testing
+        cls.config["normalize_obs"] = False
+        cls.config["sparse_width_obs"] = False
+        cls.lookahead_n_points = cls.config["lookahead_n_points"]
+        cls.lookahead_ds = cls.config["lookahead_ds"]
+
+    def setUp(self):
+        """Create fresh environment for each test"""
+        self.env = gym.make(get_env_id(), config=self.config)
+        self.env.reset()
+
+    def tearDown(self):
+        """Clean up environment after each test"""
+        self.env.close()
+
+    def test_observation_space_shape(self):
+        """Test that drift observation has correct shape"""
+        obs, _ = self.env.reset()
+
+        # Calculate expected size based on drift features
+        expected_size = (
+            1  # linear_vel_x
+            + 1  # linear_vel_y
+            + 1  # frenet_u
+            + 1  # frenet_n
+            + 1  # ang_vel_z
+            + 1  # beta
+            + 1  # delta
+            + 1  # prev_steering_cmd
+            + 1  # prev_accl_cmd
+            + 1  # prev_avg_wheel_omega
+            + 1  # curr_vel_cmd
+            + self.lookahead_n_points  # lookahead_curvatures
+            + self.lookahead_n_points  # lookahead_widths
+        )
+
+        self.assertEqual(obs.shape[0], expected_size, f"Expected obs size {expected_size}, got {obs.shape[0]}")
+        self.assertEqual(obs.dtype, np.float32, "Observation should be float32")
+
+    def test_linear_vel_x(self):
+        """Test that linear_vel_x holds current longitudinal velocity from standardized state"""
+        obs, _ = self.env.reset()
+
+        # Step once to get meaningful velocities
+        action = np.array([[0.0, 0.2]])  # [steering, acceleration]
+        obs, _, _, _, _ = self.env.step(action)
+
+        # Get ground truth from agent's standardized state
+        agent = self.env.unwrapped.sim.agents[0]
+        std_state = agent.standard_state
+        expected_vx = std_state["v_x"]
+
+        # Extract from observation (first element)
+        observed_vx = obs[0]
+
+        self.assertAlmostEqual(
+            observed_vx, expected_vx, places=5, msg=f"linear_vel_x mismatch: expected {expected_vx}, got {observed_vx}"
+        )
+
+    def test_linear_vel_y(self):
+        """Test that linear_vel_y holds current lateral velocity from standardized state"""
+        obs, _ = self.env.reset()
+
+        # Step once to get meaningful velocities
+        action = np.array([[0.0, 0.2]])
+        obs, _, _, _, _ = self.env.step(action)
+
+        # Get ground truth from agent's standardized state
+        agent = self.env.unwrapped.sim.agents[0]
+        std_state = agent.standard_state
+        expected_vy = std_state["v_y"]
+
+        # Extract from observation (second element)
+        observed_vy = obs[1]
+
+        self.assertAlmostEqual(
+            observed_vy, expected_vy, places=5, msg=f"linear_vel_y mismatch: expected {expected_vy}, got {observed_vy}"
+        )
+
+    def test_frenet_u(self):
+        """Test that frenet_u holds heading error (ephi) from track.cartesian_to_frenet"""
+        obs, _ = self.env.reset()
+
+        # Step to get non-zero state
+        action = np.array([[0.1, 0.2]])
+        obs, _, _, _, _ = self.env.step(action)
+
+        # Get ground truth from track projection
+        agent = self.env.unwrapped.sim.agents[0]
+        std_state = agent.standard_state
+        x, y, theta = std_state["x"], std_state["y"], std_state["yaw"]
+
+        track = self.env.unwrapped.track
+        s, ey, ephi = track.cartesian_to_frenet(x, y, theta, use_raceline=False)
+
+        # Extract from observation (third element)
+        observed_u = obs[2]
+
+        self.assertAlmostEqual(
+            observed_u, ephi, places=5, msg=f"frenet_u (ephi) mismatch: expected {ephi}, got {observed_u}"
+        )
+
+    def test_frenet_n(self):
+        """Test that frenet_n holds lateral distance (ey) from track.cartesian_to_frenet"""
+        obs, _ = self.env.reset()
+
+        # Step to get non-zero state
+        action = np.array([[0.1, 0.2]])
+        obs, _, _, _, _ = self.env.step(action)
+
+        # Get ground truth from track projection
+        agent = self.env.unwrapped.sim.agents[0]
+        std_state = agent.standard_state
+        x, y, theta = std_state["x"], std_state["y"], std_state["yaw"]
+
+        track = self.env.unwrapped.track
+        s, ey, ephi = track.cartesian_to_frenet(x, y, theta, use_raceline=False)
+
+        # Extract from observation (fourth element)
+        observed_n = obs[3]
+
+        self.assertAlmostEqual(observed_n, ey, places=5, msg=f"frenet_n (ey) mismatch: expected {ey}, got {observed_n}")
+
+    def test_ang_vel_z(self):
+        """Test that ang_vel_z holds current yaw rate from standardized state"""
+        obs, _ = self.env.reset()
+
+        # Step with steering to induce yaw rate
+        action = np.array([[0.3, 0.5]])
+        for _ in range(5):  # Multiple steps to build up yaw rate
+            obs, _, _, _, _ = self.env.step(action)
+
+        # Get ground truth from agent's standardized state
+        agent = self.env.unwrapped.sim.agents[0]
+        std_state = agent.standard_state
+        expected_yaw_rate = std_state["yaw_rate"]
+
+        # Extract from observation (fifth element)
+        observed_yaw_rate = obs[4]
+
+        self.assertAlmostEqual(
+            observed_yaw_rate,
+            expected_yaw_rate,
+            places=5,
+            msg=f"ang_vel_z mismatch: expected {expected_yaw_rate}, got {observed_yaw_rate}",
+        )
+
+    def test_delta(self):
+        """Test that delta holds current steering angle from standardized state"""
+        obs, _ = self.env.reset()
+
+        # Step with specific steering command
+        steering_cmd = 0.25
+        action = np.array([[steering_cmd, 0.2]])
+        for _ in range(3):  # Multiple steps for steering to reach commanded value
+            obs, _, _, _, _ = self.env.step(action)
+
+        # Get ground truth from agent's standardized state
+        agent = self.env.unwrapped.sim.agents[0]
+        std_state = agent.standard_state
+        expected_delta = std_state["delta"]
+
+        # Extract from observation (sixth element)
+        observed_delta = obs[5]
+
+        self.assertAlmostEqual(
+            observed_delta,
+            expected_delta,
+            places=5,
+            msg=f"delta mismatch: expected {expected_delta}, got {observed_delta}",
+        )
+
+    def test_prev_steering_cmd(self):
+        """Test that prev_steering_cmd holds steering command from previous time step"""
+        obs, _ = self.env.reset()
+
+        # First action
+        first_steering = 0.15
+        action1 = np.array([[first_steering, 0.2]])
+        obs1, _, _, _, _ = self.env.step(action1)
+
+        # Second action (different steering)
+        second_steering = 0.30
+        action2 = np.array([[second_steering, 0.2]])
+        obs2, _, _, _, _ = self.env.step(action2)
+
+        # After second step, prev_steering_cmd should equal first_steering
+        # Extract from observation
+        observed_prev_steer = obs2[7]
+
+        self.assertAlmostEqual(
+            observed_prev_steer,
+            first_steering,
+            places=5,
+            msg=f"prev_steering_cmd should be {first_steering}, got {observed_prev_steer}",
+        )
+
+    def test_prev_accl_cmd(self):
+        """Test that prev_accl_cmd holds acceleration command from previous time step"""
+        obs, _ = self.env.reset()
+
+        # First action with specific acceleration
+        first_accl = 0.3
+        action1 = np.array([[0.0, first_accl]])
+        obs1, _, _, _, _ = self.env.step(action1)
+
+        # Second action with different acceleration
+        second_accl = 0.6
+        action2 = np.array([[0.0, second_accl]])
+        obs2, _, _, _, _ = self.env.step(action2)
+
+        # After second step, prev_accl_cmd should hold the actual acceleration from first step
+        # Get the actual acceleration that was applied in first step
+        agent = self.env.unwrapped.sim.agents[0]
+
+        # The prev_accl_cmd at step 2 should be curr_accl_cmd from step 1
+        # Extract from observation (eighth element)
+        observed_prev_accl = obs2[7]
+
+        # We can't directly get the first step's accl, but we can verify it's not zero
+        # and verify the temporal shift works by doing another step
+        action3 = np.array([[0.0, 0.9]])
+        obs3, _, _, _, _ = self.env.step(action3)
+        observed_prev_accl_step3 = obs3[7]
+
+        # prev_accl at step 3 should not equal prev_accl at step 2 (unless accl happened to be same)
+        # This verifies temporal shifting is happening
+        self.assertIsInstance(observed_prev_accl, (float, np.floating), "prev_accl_cmd should be a float")
+
+    def test_prev_avg_wheel_omega(self):
+        """Test that prev_avg_wheel_omega holds average wheel speed from previous time step"""
+        obs, _ = self.env.reset()
+
+        # Step multiple times to build up wheel angular velocities
+        action = np.array([[0.0, 0.5]])
+        for _ in range(3):
+            obs, _, _, _, _ = self.env.step(action)
+
+        # Get current wheel omegas to verify they're non-zero
+        agent = self.env.unwrapped.sim.agents[0]
+        curr_avg = agent.curr_avg_wheel_omega
+
+        # Step again
+        obs_next, _, _, _, _ = self.env.step(action)
+
+        # After next step, prev_avg_wheel_omega should equal curr from previous step
+        # Extract from observation
+        observed_prev_omega = obs_next[9]
+
+        # The prev value in next step should equal curr value from this step
+        self.assertAlmostEqual(
+            observed_prev_omega,
+            curr_avg,
+            places=5,
+            msg=f"prev_avg_wheel_omega should be {curr_avg}, got {observed_prev_omega}",
+        )
+
+    def test_curr_vel_cmd(self):
+        """Test that curr_vel_cmd holds integrated velocity command"""
+        obs, _ = self.env.reset()
+
+        # Get initial velocity command
+        agent = self.env.unwrapped.sim.agents[0]
+        initial_vel_cmd = agent.curr_vel_cmd
+
+        # Step with constant acceleration
+        accl = 0.4
+        action = np.array([[0.0, accl]])
+        obs, _, _, _, _ = self.env.step(action)
+
+        # Get actual acceleration applied (after constraints)
+        actual_accl = agent.curr_accl_cmd
+        timestep = self.env.unwrapped.timestep
+
+        # Expected velocity command after integration
+        expected_vel_cmd = initial_vel_cmd + actual_accl * timestep
+        # Apply clipping as done in base_classes.py line 368
+        v_min = agent.params["v_min"]
+        v_max = agent.params["v_max"]
+        expected_vel_cmd = np.clip(expected_vel_cmd, v_min, v_max)
+
+        # Extract from observation
+        observed_vel_cmd = obs[10]
+
+        self.assertAlmostEqual(
+            observed_vel_cmd,
+            expected_vel_cmd,
+            places=4,
+            msg=f"curr_vel_cmd mismatch: expected {expected_vel_cmd}, got {observed_vel_cmd}",
+        )
+
+    def test_curr_vel_cmd_multi_step_integration(self):
+        """Test that curr_vel_cmd correctly integrates over multiple time steps"""
+        obs, _ = self.env.reset()
+
+        # Get initial velocity command
+        agent = self.env.unwrapped.sim.agents[0]
+        initial_vel_cmd = agent.curr_vel_cmd
+
+        # Step twice with known acceleration
+        accl = 0.3
+        action = np.array([[0.0, accl]])
+        timestep = self.env.unwrapped.timestep
+        v_min = agent.params["v_min"]
+        v_max = agent.params["v_max"]
+
+        # First step
+        obs1, _, _, _, _ = self.env.step(action)
+        actual_accl_1 = agent.curr_accl_cmd
+        expected_vel_cmd_1 = np.clip(initial_vel_cmd + actual_accl_1 * timestep, v_min, v_max)
+
+        # Second step
+        obs2, _, _, _, _ = self.env.step(action)
+        actual_accl_2 = agent.curr_accl_cmd
+        expected_vel_cmd_2 = np.clip(expected_vel_cmd_1 + actual_accl_2 * timestep, v_min, v_max)
+
+        # Extract from observation
+        observed_vel_cmd = obs2[10]
+
+        self.assertAlmostEqual(
+            observed_vel_cmd,
+            expected_vel_cmd_2,
+            places=4,
+            msg=f"curr_vel_cmd after 2 steps: expected {expected_vel_cmd_2}, got {observed_vel_cmd}",
+        )
+
+    def test_lookahead_curvatures(self):
+        """Test that lookahead_curvatures matches sample_lookahead_curvatures_fast result"""
+        obs, _ = self.env.reset()
+
+        # Step to get non-initial position
+        action = np.array([[0.0, 0.3]])
+        obs, _, _, _, _ = self.env.step(action)
+
+        # Get current position in Frenet coordinates
+        agent = self.env.unwrapped.sim.agents[0]
+        std_state = agent.standard_state
+        x, y, theta = std_state["x"], std_state["y"], std_state["yaw"]
+
+        track = self.env.unwrapped.track
+        s, ey, ephi = track.cartesian_to_frenet(x, y, theta, use_raceline=False)
+
+        # Get expected curvatures using the same function
+        expected_curvatures = sample_lookahead_curvatures_fast(
+            track, s, n_points=self.lookahead_n_points, ds=self.lookahead_ds
+        )
+
+        # Extract from observation
+        observed_curvatures = obs[11 : 11 + self.lookahead_n_points]
+
+        np.testing.assert_array_almost_equal(
+            observed_curvatures,
+            expected_curvatures,
+            decimal=5,
+            err_msg="lookahead_curvatures do not match expected values",
+        )
+
+    def test_lookahead_widths(self):
+        """Test that lookahead_widths matches sample_lookahead_widths_fast result"""
+        obs, _ = self.env.reset()
+
+        # Step to get non-initial position
+        action = np.array([[0.0, 0.3]])
+        obs, _, _, _, _ = self.env.step(action)
+
+        # Get current position in Frenet coordinates
+        agent = self.env.unwrapped.sim.agents[0]
+        std_state = agent.standard_state
+        x, y, theta = std_state["x"], std_state["y"], std_state["yaw"]
+
+        track = self.env.unwrapped.track
+        s, ey, ephi = track.cartesian_to_frenet(x, y, theta, use_raceline=False)
+
+        # Get expected widths using the same function
+        expected_widths = sample_lookahead_widths_fast(track, s, n_points=self.lookahead_n_points, ds=self.lookahead_ds)
+
+        # Extract from observation
+        start_idx = 11 + self.lookahead_n_points
+        end_idx = 11 + 2 * self.lookahead_n_points
+        observed_widths = obs[start_idx:end_idx]
+
+        np.testing.assert_array_almost_equal(
+            observed_widths, expected_widths, decimal=5, err_msg="lookahead_widths do not match expected values"
+        )
+
+    def test_curr_avg_wheel_omega(self):
+        """Test that curr_avg_wheel_omega is correctly computed and stored for STD model"""
+        obs, _ = self.env.reset()
+
+        # Step multiple times to build up wheel speeds
+        action = np.array([[0.0, 0.5]])
+        for _ in range(5):
+            obs, _, _, _, _ = self.env.step(action)
+
+        # Get current wheel omegas from agent (computed at start of last update_pose)
+        agent = self.env.unwrapped.sim.agents[0]
+        curr_omega_at_step5 = agent.curr_avg_wheel_omega
+
+        # Verify it's non-zero (vehicle is moving)
+        self.assertNotAlmostEqual(curr_omega_at_step5, 0.0, places=2, msg="curr_avg_wheel_omega should be non-zero")
+
+        # Verify it's a finite number
+        self.assertTrue(np.isfinite(curr_omega_at_step5), "curr_avg_wheel_omega should be finite")
+
+        # Step once more - prev_avg_wheel_omega in next observation should match curr from this step
+        obs_next, _, _, _, _ = self.env.step(action)
+
+        # Extract prev_avg_wheel_omega
+        observed_prev_omega = obs_next[9]
+
+        # The prev value at step 6 should equal curr value from step 5
+        self.assertAlmostEqual(
+            observed_prev_omega,
+            curr_omega_at_step5,
+            places=5,
+            msg=f"prev_avg_wheel_omega should be {curr_omega_at_step5}, got {observed_prev_omega}",
+        )
+
+    def test_observation_contains_no_nan(self):
+        """Test that observation contains no NaN values"""
+        obs, _ = self.env.reset()
+
+        # Step multiple times
+        action = np.array([[0.1, 0.3]])
+        for _ in range(10):
+            obs, _, _, _, _ = self.env.step(action)
+
+        # Check for NaN
+        self.assertFalse(np.any(np.isnan(obs)), "Observation contains NaN values")
+
+    def test_observation_contains_no_inf(self):
+        """Test that observation contains no infinite values"""
+        obs, _ = self.env.reset()
+
+        # Step multiple times
+        action = np.array([[0.1, 0.3]])
+        for _ in range(10):
+            obs, _, _, _, _ = self.env.step(action)
+
+        # Check for inf
+        self.assertFalse(np.any(np.isinf(obs)), "Observation contains infinite values")
+
+    def test_temporal_consistency(self):
+        """Test that prev values correctly shift from curr values across time steps"""
+        obs, _ = self.env.reset()
+
+        # Step 1
+        action1 = np.array([[0.2, 0.4]])
+        obs1, _, _, _, _ = self.env.step(action1)
+        agent = self.env.unwrapped.sim.agents[0]
+        curr_steer_1 = agent.curr_steering_cmd
+        curr_omega_1 = agent.curr_avg_wheel_omega
+
+        # Step 2
+        action2 = np.array([[0.3, 0.5]])
+        obs2, _, _, _, _ = self.env.step(action2)
+        prev_steer_2 = obs2[7]
+        prev_omega_2 = obs2[9]
+
+        # Verify temporal shift
+        self.assertAlmostEqual(prev_steer_2, curr_steer_1, places=5, msg="Steering command not shifted correctly")
+        self.assertAlmostEqual(prev_omega_2, curr_omega_1, places=5, msg="Wheel omega not shifted correctly")

@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+from ..track import Track
+from .map_reset import AllMapResetFn
+from .masked_reset import AllTrackResetFn, GridResetFn
+from .reset_fn import ResetFn
+
+
+def make_reset_fn(type: str | None, track: Track, num_agents: int, **kwargs) -> ResetFn:
+    """
+    The reset type follows the pattern: <refline>_<resetfn>_<shuffle>
+
+    Components:
+    1. Reference Line (refline):
+        - cl - Centerline
+        - rl - Raceline
+        - map - Map-based reset
+    2. Reset Function (resetfn):
+        - grid - Uses GridResetFn (resets in starting grid, first ~1.0m of track)
+        - random - Uses AllTrackResetFn (resets anywhere along the entire track)
+    3. Shuffle (shuffle):
+        - static - Fixed agent ordering
+        - random - Randomize agent positions
+    """
+    type = type or "rl_grid_static"
+
+    try:
+        refline_token, reset_token, shuffle_token = type.split("_")
+
+        if refline_token == "map":
+            reset_fn = {"random": AllMapResetFn}[reset_token]
+            shuffle = {"static": False, "random": True}[shuffle_token]
+            return reset_fn(track=track, num_agents=num_agents, shuffle=shuffle, **kwargs)
+
+        # "cl" or "rl"
+        line_type = {"cl": "centerline", "rl": "raceline"}[refline_token]
+        reset_fn = {"grid": GridResetFn, "random": AllTrackResetFn}[reset_token]
+        shuffle = {"static": False, "random": True}[shuffle_token]
+        options = {"cl": {"move_laterally": True}, "rl": {"move_laterally": False}}[refline_token]
+
+    except Exception as ex:
+        raise ValueError(f"Invalid reset function type: {type}. Expected format: <refline>_<resetfn>_<shuffle>") from ex
+
+    return reset_fn(track=track, line_type=line_type, num_agents=num_agents, shuffle=shuffle, **options, **kwargs)

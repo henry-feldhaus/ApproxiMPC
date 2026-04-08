@@ -1,0 +1,73 @@
+/* Custom theme colors — adapted from stable-baselines3 */
+:root {
+    --main-bg-color: #292a2d; 
+    /* dark grey #292a2d, maroon #981e44 */
+    --link-color: #f4c621;
+    /* yellow #f4c621, red #e91c51, orange #e68840 */
+    --slate-blue: #3165aa;
+}
+
+/* Sidebar header / search area */
+.wy-side-nav-search {
+    background-color: var(--main-bg-color);
+}
+
+/* Mobile top bar */
+.wy-nav-top {
+    background-color: var(--main-bg-color);
+}
+
+/* Content link colors */
+a {
+    color: var(--slate-blue);
+}
+
+a:hover {
+    color: #1e3f6f;
+}
+
+.wy-menu a {
+    color: #b3b3b3;
+}
+
+.wy-menu a:hover {
+    color: #b3b3b3;
+}
+
+a.icon.icon-home {
+    color: var(--main-bg-color);
+}
+
+.version {
+    color: var(--link-color) !important;
+}
+
+/* Sidebar section headings (GETTING STARTED, USER GUIDE, etc.) */
+.wy-menu-vertical p.caption {
+    color: var(--link-color);
+}
+
+/* Content section headings */
+.rst-content h1, .rst-content h2, .rst-content h3 {
+    color: var(--main-bg-color);
+}
+
+/* Toctree caption headings in content area */
+.rst-content .toctree-wrapper p.caption {
+    color: var(--main-bg-color);
+}
+
+
+/* Admonitions */
+.rst-content .admonition .admonition-title { color: #fff; }
+.admonition.tip .admonition-title,
+.admonition.important .admonition-title    { background-color: #f4c621; }
+.admonition.tip, .admonition.important     { background-color: #fdf8e8; }
+.admonition.note .admonition-title,
+.admonition.seealso .admonition-title      { background-color: #3165aa; }
+.admonition.note, .admonition.seealso      { background-color: #eaf0f8; }
+.admonition.warning .admonition-title,
+.admonition.caution .admonition-title,
+.admonition.attention .admonition-title    { background-color: #e91c51; }
+.admonition.warning, .admonition.caution,
+.admonition.attention                      { background-color: #fdeef1; }
