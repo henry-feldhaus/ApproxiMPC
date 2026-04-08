@@ -40,13 +40,13 @@ You can run a quick waypoint follow example:
 
 ```bash
 cd examples
-python3 waypoint_follow.py
+uv run python waypoint_follow.py
 ```
 
 Or a simple centerline follow example:
 ```bash
 cd examples
-python3 controller_example.py
+uv run python controller_example.py
 ```
 
 ## Additional Dependencies
@@ -86,7 +86,23 @@ The main racing training script is at `train/ppo_race.py`. The recovery training
 For example, train a racing model with:
 
 ```bash
-python3 train/ppo_race.py --m t
+uv run python train/ppo_race.py --m t
+```
+
+Quick training functionality smoke test (short run):
+
+```bash
+uv run python - <<'PY'
+import gymnasium as gym
+from stable_baselines3 import PPO
+from train.config.env_config import get_drift_train_config, get_env_id
+
+env = gym.make(get_env_id(), config=get_drift_train_config())
+model = PPO("MlpPolicy", env, n_steps=32, batch_size=32, verbose=0)
+model.learn(total_timesteps=128, progress_bar=False)
+env.close()
+print("Training smoke test passed")
+PY
 ```
 
 Detailed usage guidelines are at the top of the training script files.
@@ -208,13 +224,13 @@ The wandb models are available here: <https://wandb.ai/teo-altum-quinque-queen-s
 To use policies in other packages, such as a ROS2 package for sim-to-real transfer, we provide support for converting an SB3 model to ONNX type. Use `train/export_onnx.py` for conversion:
 
 ```bash
-python3 train/export_onnx.py --path <SB3 model path>
+uv run python train/export_onnx.py --path <SB3 model path>
 ```
 
 Run the policy with ONNX using `OnnxPolicyRunner` defined in `gymkhana/inference/onnx_runner.py`. For example for a racing policy:
 
 ```bash
-python3 train/ppo_race.py --m x --path <ONNX model path>
+uv run python train/ppo_race.py --m x --path <ONNX model path>
 ```
 
 ## Custom Maps
