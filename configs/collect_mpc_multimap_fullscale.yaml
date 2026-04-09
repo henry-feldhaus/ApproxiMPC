@@ -20,8 +20,8 @@ run:
   stop_on_error: false  # Continue on failure (skip failed combo, continue to next)
 
 execution:
-  mode: sequential  # Sequential execution (each combo waits for previous to finish); parallel mode TBD
-  max_workers: 2  # If parallel mode enabled, max concurrent workers (currently unused)
+  mode: parallel  # Parallel execution with multiple workers
+  max_workers: 2  # Max concurrent workers (2 GPUs assumed, adjust for your hardware)
 
 output:
   root_dir: outputs/datasets/multimap_training  # Root directory for all multimap outputs

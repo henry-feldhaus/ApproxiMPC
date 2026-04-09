@@ -7,6 +7,7 @@ import copy
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -141,8 +142,11 @@ def main() -> None:
     stop_on_error = bool(run_cfg.get("stop_on_error", True))
 
     mode = str(cfg.get("execution", {}).get("mode", "sequential")).lower()
-    if mode != "sequential":
-        print(f"WARNING: execution.mode='{mode}' not implemented yet; using sequential")
+    max_workers = None
+    if mode == "parallel":
+        max_workers = int(cfg.get("execution", {}).get("max_workers", 2))
+        if max_workers < 1:
+            raise ValueError(f"execution.max_workers must be >= 1, got {max_workers}")
 
     combos = build_combo_sequence(maps, directions)
     run_dir = build_run_dir(cfg, repo_root)
@@ -152,7 +156,8 @@ def main() -> None:
         "multi_map_config": str(cfg_path),
         "base_collector_config": str(base_collector_cfg_path),
         "execution_mode_requested": mode,
-        "execution_mode_used": "sequential",
+        "execution_mode_used": mode if mode in {"sequential", "parallel"} else "sequential",
+        "max_workers": max_workers,
         "maps": maps,
         "directions": directions,
         "episodes_per_combo": episodes_per_combo,
@@ -162,29 +167,76 @@ def main() -> None:
 
     print(f"Run directory: {run_dir}")
     print(f"Total combos: {len(combos)}")
+    if mode == "parallel":
+        print(f"Execution mode: parallel with max_workers={max_workers}")
+    else:
+        print(f"Execution mode: sequential")
 
+    # Prepare all combo tasks
+    combo_tasks = []
     for idx, (map_name, direction) in enumerate(combos, start=1):
         combo_name = f"{map_name}_{direction}"
         combo_output_dir = run_dir / map_name / direction
         combo_output_dir.mkdir(parents=True, exist_ok=True)
-
         combo_cfg_path = run_dir / "configs" / f"collect_{idx:02d}_{combo_name}.yaml"
+        combo_tasks.append((idx, map_name, direction, combo_cfg_path, combo_output_dir))
 
-        print(
-            f"[{idx}/{len(combos)}] map={map_name}, direction={direction}, "
-            f"episodes={episodes_per_combo}, render={render}"
-        )
+    # Execute combos (sequential or parallel)
+    combo_results = {}
+    if mode == "parallel":
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    run_combo,
+                    collector_script=collector_script,
+                    collector_cfg=base_collector_cfg,
+                    combo_cfg_path=combo_cfg_path,
+                    map_name=map_name,
+                    direction=direction,
+                    episodes_per_combo=episodes_per_combo,
+                    render=render,
+                    combo_output_dir=combo_output_dir,
+                ): (idx, map_name, direction, combo_cfg_path, combo_output_dir)
+                for idx, map_name, direction, combo_cfg_path, combo_output_dir in combo_tasks
+            }
+            for future in as_completed(futures):
+                idx, map_name, direction, combo_cfg_path, combo_output_dir = futures[future]
+                try:
+                    proc = future.result()
+                    combo_results[idx] = proc
+                    status = "ok" if proc.returncode == 0 else "failed"
+                    print(f"[{idx}/{len(combos)}] {map_name}_{direction}: {status}")
+                except Exception as e:
+                    print(f"[{idx}/{len(combos)}] {map_name}_{direction}: exception: {e}")
+                    combo_results[idx] = None
+    else:
+        # Sequential execution
+        for idx, map_name, direction, combo_cfg_path, combo_output_dir in combo_tasks:
+            print(
+                f"[{idx}/{len(combos)}] map={map_name}, direction={direction}, "
+                f"episodes={episodes_per_combo}, render={render}"
+            )
+            proc = run_combo(
+                collector_script=collector_script,
+                collector_cfg=base_collector_cfg,
+                combo_cfg_path=combo_cfg_path,
+                map_name=map_name,
+                direction=direction,
+                episodes_per_combo=episodes_per_combo,
+                render=render,
+                combo_output_dir=combo_output_dir,
+            )
+            combo_results[idx] = proc
 
-        proc = run_combo(
-            collector_script=collector_script,
-            collector_cfg=base_collector_cfg,
-            combo_cfg_path=combo_cfg_path,
-            map_name=map_name,
-            direction=direction,
-            episodes_per_combo=episodes_per_combo,
-            render=render,
-            combo_output_dir=combo_output_dir,
-        )
+    # Build manifest from results
+    for idx, map_name, direction, combo_cfg_path, combo_output_dir in combo_tasks:
+        proc = combo_results.get(idx)
+        if proc is None:
+            exit_code = -1
+            status = "failed"
+        else:
+            exit_code = int(proc.returncode)
+            status = "ok" if proc.returncode == 0 else "failed"
 
         combo_status = {
             "index": idx,
@@ -192,12 +244,13 @@ def main() -> None:
             "direction": direction,
             "collector_config": str(combo_cfg_path),
             "output_dir": str(combo_output_dir),
-            "exit_code": int(proc.returncode),
-            "status": "ok" if proc.returncode == 0 else "failed",
+            "exit_code": exit_code,
+            "status": status,
         }
         manifest["combos"].append(combo_status)
 
-        if proc.returncode != 0 and stop_on_error:
+        if status == "failed" and stop_on_error and mode == "sequential":
+            # Only stop on first error in sequential mode
             print("Stopping due to failure and run.stop_on_error=true")
             break
 
