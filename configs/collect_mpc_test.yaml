@@ -1,28 +1,42 @@
 # Minimal test configuration for quick validation
+# Use this to test perturbation injection and DAgger labeling on a single map.
+
 run:
-  episodes: 2
-  steps_per_episode: 500
-  render: false
-  use_default_reset: false
+  episodes: 2  # Minimal episodes for quick test (normally 10+)
+  steps_per_episode: 500  # Minimal steps for quick test
+  render: false  # Disable rendering for headless test runs
+  use_default_reset: false  # Use bridge start pose
 
 env:
-  map: Spielberg
-  timestep: 0.01
-  integrator: rk4
-  model: ks
+  map: Spielberg  # Map name (test on single map for speed)
+  timestep: 0.01  # Standard simulation timestep
+  integrator: rk4  # RK4 integrator
+  model: ks  # Legacy field
 
 controller:
-  ref_speed: 4.0
+  ref_speed: 4.0  # Standard reference speed
+
+lidar:
+  enabled: true  # Enable lidar collection for validation run
+  env_num_beams: 360  # Simulated lidar beam count
+  clip_min: 0.0  # Minimum clipped lidar range (meters)
+  clip_max: 15.0  # Maximum clipped lidar range (meters) for near-field focus
+  store_raw: false  # Keep dataset small for quick tests
+  dtype: float16  # Compact lidar storage type
+  binning:
+    enabled: true  # Enable downsampling of lidar scans
+    n_bins: 60  # Number of bins stored per scan
+    method: min  # Min pooling preserves nearest obstacle signal
 
 perturbation:
-  enabled: true
-  probability: 0.2
-  shove_magnitude: 0.3
-  min_steps_between_shoves: 0
+  enabled: true  # ENABLE perturbations (main test differentiator)
+  probability: 0.2  # 20% of steps receive random steering shove
+  shove_magnitude: 0.3  # Steering shove magnitude (radians)
+  min_steps_between_shoves: 0  # Allow shoves every step (no cooldown)
 
 dagger:
-  enabled: true
-  record_noise_vectors: true
+  enabled: true  # ENABLE DAgger dual-action labeling
+  record_noise_vectors: true  # Record the noise vectors for analysis
 
 output:
-  output_dir: outputs/datasets
+  output_dir: outputs/datasets  # Save test output to standard location

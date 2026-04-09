@@ -1,91 +1,96 @@
 [![gymkhana](https://img.shields.io/pypi/v/gymkhana)](https://pypi.org/project/gymkhana/)
-[![python_version](https://img.shields.io/badge/Python-%3E=3.10-purple)](https://www.python.org/downloads/)
+[![python_version](https://img.shields.io/badge/Python-%3E=3.10-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-# Gym-Khana (Minimal MPC Workflow)
+# ApproxiMPC: Minimal MPC Data Collection
 
-This repository is currently maintained as a minimal, container-first workflow for:
+This repository is maintained as a focused MPC data-generation pipeline for imitation learning:
 
-1. Running MPC in simulation.
-2. Collecting trajectories.
-3. Supporting downstream imitation learning (for example, LSTM training outside this repo).
+1. run MPC controllers in Gym-Khana,
+2. collect trajectories into NPZ datasets,
+3. train sequence models (for example LSTM) downstream.
 
-The RL training/test/CI surfaces were intentionally removed to keep the codebase focused on MPC data generation.
+## What This Repo Contains
 
-## Quick Start (Container-First)
+Primary entrypoints:
+- `src/kmpc_race.py`: visual kinematic MPC run.
+- `src/stmpc_race.py`: visual single-track MPC run.
+- `src/collect_mpc_data.py`: single-map data collection.
+- `src/collect_mpc_multimap.py`: multi-map orchestration.
 
-Build the image:
+Primary configs:
+- `configs/collect_mpc_default.yaml`: default single-run collector config.
+- `configs/collect_mpc_test.yaml`: perturbation-enabled single-run test config.
+- `configs/collect_mpc_multimap_fullscale.yaml`: full batch collection plan.
+
+## Quick Start (Docker, Recommended)
+
+Build:
 
 ```bash
 docker compose build app
 ```
 
-If you just pulled Dockerfile changes, rebuild to pick up baked dependencies (including acados `t_renderer`):
-
-```bash
-docker compose build --no-cache app
-```
-
-Run a shell in the container:
-
-```bash
-docker compose run --rm app
-```
-
-Run the kinematic MPC GUI example:
+Run kinematic MPC GUI:
 
 ```bash
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/kmpc_race.py"
 ```
 
-Run the single-track MPC GUI example:
-
-```bash
-docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/stmpc_race.py"
-```
-
-Collect transition data with kinematic MPC (clean expert behavior):
+Collect a single-map dataset (default config):
 
 ```bash
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_data.py"
 ```
 
-Collect with perturbation injection and DAgger dual-action labeling:
+Collect a full multi-map training dataset:
 
 ```bash
-docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_data.py --config /app/configs/collect_mpc_test.yaml"
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_multimap.py --config /app/configs/collect_mpc_multimap_fullscale.yaml"
 ```
 
-Collect with custom configuration file:
+## Data Output
 
-```bash
-docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_data.py --config /path/to/custom.yaml --render"
-```
+Collector outputs are compressed NPZ datasets plus JSON metadata.
 
-### Data Collection Configuration
+Typical fields:
+- `observations`
+- `lidar_scans` / `next_lidar_scans` (when `lidar.enabled=true`)
+- `expert_actions`
+- `executed_actions`
+- `is_perturbed`
+- `noise_vectors`
+- rewards and termination flags
 
-Edit `configs/collect_mpc_default.yaml` to customize collection behavior:
-- `run`: episodes, max steps, rendering, reset behavior
-- `env`: map, timestep, integrator, vehicle model
-- `controller`: MPC reference speed
-- `perturbation`: probabilistic noise injection (80% clean, 20% perturbed)
-- `dagger`: dual-action labeling for recovery learning
-- `output`: dataset directory and filename
+Default output root is configured in YAML under `output.output_dir`.
 
-Datasets are saved as compressed NPZ files with metadata JSON. Fields include `expert_actions`, `executed_actions`, `is_perturbed` flag, and `noise_vectors` for imitation learning.
+## Configuration Guide
 
-## Baseline Verification Command
+All collection behavior is YAML-driven.
 
-Use this command to verify the main MPC path after changes:
+Key sections in collector configs:
+- `run`: episodes, step limits, rendering, lap termination
+- `env`: map, direction, timestep, integrator
+- `controller`: `kmpc` or `stmpc` and controller-specific settings
+- `lidar`: lidar feature collection, clipping, and scan binning controls
+- `perturbation`: probabilistic action perturbation
+- `dagger`: dual-action labeling for recovery supervision
+- `output`: output directory and filename
+
+In multi-map configs:
+- `run.maps` and `run.directions` define the sweep order
+- `episodes_per_combo` controls run count per map/direction
+- `collector_overrides` applies deep overrides onto the base collector config
+
+## Baseline Validation
+
+Use this to verify the main MPC path remains healthy after code changes:
 
 ```bash
 docker compose run --rm app bash -c 'cd /app && PYTHONPATH=/app python - <<"PY"
 import gymnasium as gym
 import numpy as np
 import gymkhana
-import sys
-
-sys.path.insert(0, "/app/examples/controllers")
 from mpc.gym_bridge import KMPCGymBridge
 
 config = {
@@ -109,37 +114,20 @@ x0, y0, yaw0 = bridge.get_start_pose()
 obs, _ = env.reset(options={"poses": np.array([[x0, y0, yaw0]])})
 
 steps = 0
-total_reward = 0.0
 while steps < 400:
     action = bridge.get_action(obs)
-    obs, reward, terminated, truncated, _ = env.step(action)
-    total_reward += reward
+    obs, _, terminated, truncated, _ = env.step(action)
     env.render()
     steps += 1
     if terminated or truncated:
         break
 
-print(f"MPC GUI baseline complete: steps={steps}, total_reward={total_reward:.2f}")
 env.close()
+print(f"MPC GUI baseline complete: steps={steps}")
 PY'
 ```
 
-Expected baseline metric in this trimmed state:
-- `steps=400`
-- `total_reward=74.70`
-
-## Project Layout (Current)
-
-Primary files for the current workflow:
-
-- `src/kmpc_race.py`: Interactive kinematic MPC runner.
-- `src/stmpc_race.py`: Interactive single-track MPC runner.
-- `src/collect_mpc_data.py`: MPC data collection with YAML configuration.
-- `configs/collect_mpc_default.yaml`: Default data collection parameters.
-- `gymkhana/envs/gymkhana_env.py`: Gymnasium environment core.
-- `examples/controllers/mpc/gym_bridge.py`: MPC-environment bridge for action computation.
-
 ## Notes
 
-- This repository is intended to be run in Docker/devcontainer environments.
-- The Docker image installs acados `t_renderer` during build, so GUI/MPC runs should not prompt for an interactive tera download after rebuild.
+- This codebase is intentionally MPC-focused and container-first.
+- Historical RL/training/test infrastructure is out of scope for this workflow.

@@ -1,18 +1,12 @@
 """Runner script for the Kinematic MPC controller on the F1TENTH gym."""
 
-import sys
-from pathlib import Path
-
 import gymnasium as gym
 import numpy as np
 
 import gymkhana  # noqa: F401  # ensures gym env registration
-
-# Avoid importing through controllers package __init__, which currently pulls stale RL modules.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples" / "controllers"))
 from mpc.gym_bridge import KMPCGymBridge
 
-from examples.examples_utils import display_kinematic_state_obs
+from examples_utils import display_kinematic_state_obs
 
 REF_SPEED = 4.0
 MAX_STEPS = 2000

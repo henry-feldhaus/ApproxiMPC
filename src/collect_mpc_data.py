@@ -13,7 +13,6 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
 from typing import Any
 
 import gymnasium as gym
@@ -21,9 +20,6 @@ import numpy as np
 import yaml
 
 import gymkhana  # noqa: F401  # ensures gym env registration
-
-# Avoid importing through controllers package __init__, which currently pulls stale RL modules.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples" / "controllers"))
 from mpc.gym_bridge import KMPCGymBridge, STMPCGymBridge
 
 FEATURE_NAMES = [
@@ -113,6 +109,63 @@ def get_controller_config(cfg: dict) -> dict:
     }
 
 
+def get_lidar_config(cfg: dict, controller_cfg: dict) -> dict:
+    """Normalize lidar collection settings from YAML."""
+    lidar_cfg = cfg.get("lidar", {})
+    enabled = bool(lidar_cfg.get("enabled", False))
+    mode = controller_cfg["mode"]
+
+    if mode == "stmpc":
+        required_features = [
+            "scan",
+            "pose_x",
+            "pose_y",
+            "delta",
+            "linear_vel_x",
+            "linear_vel_y",
+            "pose_theta",
+            "ang_vel_z",
+            "beta",
+        ]
+    else:
+        required_features = [
+            "scan",
+            "pose_x",
+            "pose_y",
+            "delta",
+            "linear_vel_x",
+            "pose_theta",
+        ]
+
+    binning_cfg = lidar_cfg.get("binning", {})
+    n_bins = int(binning_cfg.get("n_bins", 60))
+    if n_bins <= 0:
+        raise ValueError("lidar.binning.n_bins must be > 0")
+
+    method = str(binning_cfg.get("method", "min")).lower().strip()
+    if method not in {"min", "mean"}:
+        raise ValueError("lidar.binning.method must be one of: min, mean")
+
+    dtype = str(lidar_cfg.get("dtype", "float16")).lower().strip()
+    if dtype not in {"float16", "float32"}:
+        raise ValueError("lidar.dtype must be one of: float16, float32")
+
+    return {
+        "enabled": enabled,
+        "num_beams": int(lidar_cfg.get("env_num_beams", 360)),
+        "clip_min": float(lidar_cfg.get("clip_min", 0.0)),
+        "clip_max": float(lidar_cfg.get("clip_max", 30.0)),
+        "store_raw": bool(lidar_cfg.get("store_raw", False)),
+        "dtype": dtype,
+        "feature_list": required_features,
+        "binning": {
+            "enabled": bool(binning_cfg.get("enabled", True)),
+            "n_bins": n_bins,
+            "method": method,
+        },
+    }
+
+
 def get_stmpc_reset_config(stmpc_cfg: dict, ref_speed: float) -> dict:
     """Build STMPC reset configuration."""
     init_cfg = stmpc_cfg.get("initial_state", {})
@@ -168,7 +221,7 @@ def count_by_value(values: list[str]) -> dict[str, int]:
     return counts
 
 
-def get_collect_env_config(cfg: dict, max_episode_steps: int, controller_cfg: dict) -> dict:
+def get_collect_env_config(cfg: dict, max_episode_steps: int, controller_cfg: dict, lidar_cfg: dict) -> dict:
     """Build gymnasium environment config for MPC data collection."""
     from gymkhana.envs import GKEnv
 
@@ -178,15 +231,20 @@ def get_collect_env_config(cfg: dict, max_episode_steps: int, controller_cfg: di
     if mode == "stmpc":
         stmpc_cfg = controller_cfg["stmpc"]
         model = str(stmpc_cfg.get("model", "std"))
-        obs_type = str(stmpc_cfg.get("observation_type", "frenet_dynamic_state"))
+        default_obs_type = str(stmpc_cfg.get("observation_type", "frenet_dynamic_state"))
         training_mode = str(stmpc_cfg.get("training_mode", "race"))
         use_std_params = bool(stmpc_cfg.get("use_std_vehicle_params", True))
     else:
         kmpc_cfg = controller_cfg["kmpc"]
         model = str(kmpc_cfg.get("model", "ks"))
-        obs_type = str(kmpc_cfg.get("observation_type", "kinematic_state"))
+        default_obs_type = str(kmpc_cfg.get("observation_type", "kinematic_state"))
         training_mode = "race"
         use_std_params = False
+
+    if lidar_cfg["enabled"]:
+        observation_config = {"type": "features", "features": lidar_cfg["feature_list"]}
+    else:
+        observation_config = {"type": default_obs_type}
 
     config = {
         "map": env_cfg["map"],
@@ -195,13 +253,15 @@ def get_collect_env_config(cfg: dict, max_episode_steps: int, controller_cfg: di
         "integrator": str(env_cfg["integrator"]),
         "model": model,
         "control_input": ["speed", "steering_angle"],
-        "observation_config": {"type": obs_type},
+        "observation_config": observation_config,
         "normalize_act": False,
         "normalize_obs": False,
         "training_mode": training_mode,
-        "track_direction": "normal",
+        "track_direction": str(env_cfg.get("track_direction", "normal")),
         "max_episode_steps": max_episode_steps,
     }
+    if lidar_cfg["enabled"]:
+        config["num_beams"] = int(lidar_cfg["num_beams"])
     if use_std_params:
         config["params"] = GKEnv.f1tenth_std_vehicle_params()
     return config
@@ -220,6 +280,42 @@ def obs_to_vec(obs: dict) -> np.ndarray:
         ],
         dtype=np.float32,
     )
+
+
+def extract_scan(obs: dict) -> np.ndarray:
+    """Extract lidar scan vector from observation dict."""
+    if "agent_0" in obs and "scan" in obs["agent_0"]:
+        return np.asarray(obs["agent_0"]["scan"], dtype=np.float32)
+    if "scans" in obs:
+        return np.asarray(obs["scans"][0], dtype=np.float32)
+    raise KeyError("Lidar scan not found in observation. Ensure lidar.enabled=true and observation_config supports scan.")
+
+
+def bin_scan(scan: np.ndarray, n_bins: int, method: str) -> np.ndarray:
+    """Downsample lidar scan into fixed bins using min/mean pooling."""
+    n_beams = int(scan.shape[0])
+    if n_bins >= n_beams:
+        return scan.astype(np.float32, copy=True)
+
+    edges = np.linspace(0, n_beams, n_bins + 1, dtype=np.int32)
+    binned = np.empty((n_bins,), dtype=np.float32)
+    for i in range(n_bins):
+        left = int(edges[i])
+        right = max(int(edges[i + 1]), left + 1)
+        segment = scan[left:right]
+        if method == "mean":
+            binned[i] = float(np.mean(segment))
+        else:
+            binned[i] = float(np.min(segment))
+    return binned
+
+
+def process_scan(scan: np.ndarray, lidar_cfg: dict) -> np.ndarray:
+    """Apply clipping and optional binning to lidar scan."""
+    clipped = np.clip(scan, lidar_cfg["clip_min"], lidar_cfg["clip_max"]).astype(np.float32, copy=False)
+    if lidar_cfg["binning"]["enabled"]:
+        return bin_scan(clipped, lidar_cfg["binning"]["n_bins"], lidar_cfg["binning"]["method"])
+    return clipped
 
 
 class PerturbationManager:
@@ -288,6 +384,7 @@ def main() -> None:
 
     cfg = load_config(config_path)
     controller_cfg = get_controller_config(cfg)
+    lidar_cfg = get_lidar_config(cfg, controller_cfg)
     lap_cfg = get_lap_termination_config(cfg["run"])
     if lap_cfg["method"] != "s_wrap":
         print(f"WARNING: Unsupported lap_termination.method='{lap_cfg['method']}', using 's_wrap'")
@@ -302,6 +399,16 @@ def main() -> None:
     print(
         f"Controller mode: {controller_cfg['mode']}, ref_speed={controller_cfg['ref_speed']:.2f} m/s"
     )
+    if lidar_cfg["enabled"]:
+        binning_desc = (
+            f"binning={lidar_cfg['binning']['method']}->{lidar_cfg['binning']['n_bins']}"
+            if lidar_cfg["binning"]["enabled"]
+            else "binning=disabled"
+        )
+        print(
+            "Lidar collection: "
+            f"enabled=True, env_num_beams={lidar_cfg['num_beams']}, {binning_desc}, dtype={lidar_cfg['dtype']}"
+        )
     if lap_cfg["enabled"]:
         print(
             "Lap termination: "
@@ -309,7 +416,7 @@ def main() -> None:
         )
 
     # Initialize environment
-    env_config = get_collect_env_config(cfg, cfg["run"]["steps_per_episode"], controller_cfg)
+    env_config = get_collect_env_config(cfg, cfg["run"]["steps_per_episode"], controller_cfg, lidar_cfg)
     render_mode = "human" if cfg["run"]["render"] else None
     env = gym.make("gymkhana:gymkhana-v0", config=env_config, render_mode=render_mode)
     if controller_cfg["mode"] == "stmpc":
@@ -377,6 +484,10 @@ def main() -> None:
     boundary_flags = []
     stmpc_status_codes = [] if controller_cfg["mode"] == "stmpc" else None
     noise_vectors = [] if cfg["perturbation"]["enabled"] and cfg["dagger"]["record_noise_vectors"] else None
+    lidar_observations = [] if lidar_cfg["enabled"] else None
+    lidar_next_observations = [] if lidar_cfg["enabled"] else None
+    raw_lidar_observations = [] if lidar_cfg["enabled"] and lidar_cfg["store_raw"] else None
+    raw_lidar_next_observations = [] if lidar_cfg["enabled"] and lidar_cfg["store_raw"] else None
 
     try:
         global_step = 0  # Track global step count across episodes
@@ -421,6 +532,11 @@ def main() -> None:
             truncated = False
             for step_idx in range(effective_steps_per_episode):
                 obs_vec = obs_to_vec(obs)
+                if lidar_cfg["enabled"]:
+                    scan = extract_scan(obs)
+                    lidar_observations.append(process_scan(scan, lidar_cfg))
+                    if raw_lidar_observations is not None:
+                        raw_lidar_observations.append(scan.astype(np.float32, copy=False))
                 expert_action = bridge.get_action(obs)
                 expert_action_vec = expert_action[0].astype(np.float32, copy=False)
 
@@ -438,6 +554,11 @@ def main() -> None:
                     np.array([executed_action_vec])
                 )
                 next_obs_vec = obs_to_vec(next_obs)
+                if lidar_cfg["enabled"]:
+                    next_scan = extract_scan(next_obs)
+                    lidar_next_observations.append(process_scan(next_scan, lidar_cfg))
+                    if raw_lidar_next_observations is not None:
+                        raw_lidar_next_observations.append(next_scan.astype(np.float32, copy=False))
                 collector_laps, wrapped, _ = lap_tracker.update(
                     float(next_obs["agent_0"]["pose_x"]),
                     float(next_obs["agent_0"]["pose_y"]),
@@ -536,6 +657,18 @@ def main() -> None:
     collision_arr = np.asarray(collision_flags, dtype=np.bool_)
     boundary_arr = np.asarray(boundary_flags, dtype=np.bool_)
 
+    lidar_dtype = np.float16 if lidar_cfg["dtype"] == "float16" else np.float32
+    lidar_arr = None
+    lidar_next_arr = None
+    raw_lidar_arr = None
+    raw_lidar_next_arr = None
+    if lidar_cfg["enabled"]:
+        lidar_arr = np.stack(lidar_observations).astype(lidar_dtype)
+        lidar_next_arr = np.stack(lidar_next_observations).astype(lidar_dtype)
+        if raw_lidar_observations is not None:
+            raw_lidar_arr = np.stack(raw_lidar_observations).astype(lidar_dtype)
+            raw_lidar_next_arr = np.stack(raw_lidar_next_observations).astype(lidar_dtype)
+
     # Build save dict
     save_dict = {
         "observations": obs_arr,
@@ -563,6 +696,17 @@ def main() -> None:
         noise_arr = np.stack(noise_vectors).astype(np.float32)
         save_dict["noise_vectors"] = noise_arr
 
+    if lidar_cfg["enabled"] and lidar_arr is not None and lidar_next_arr is not None:
+        save_dict["lidar_scans"] = lidar_arr
+        save_dict["next_lidar_scans"] = lidar_next_arr
+        save_dict["lidar_names"] = np.asarray(
+            [f"lidar_{i}" for i in range(int(lidar_arr.shape[1]))],
+            dtype="U32",
+        )
+        if raw_lidar_arr is not None and raw_lidar_next_arr is not None:
+            save_dict["raw_lidar_scans"] = raw_lidar_arr
+            save_dict["next_raw_lidar_scans"] = raw_lidar_next_arr
+
     np.savez_compressed(out_path, **save_dict)
 
     # Save metadata
@@ -570,6 +714,7 @@ def main() -> None:
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "config_file": str(config_path),
         "map": cfg["env"]["map"],
+        "track_direction": env_config["track_direction"],
         "vehicle_model": env_config["model"],
         "episodes_requested": cfg["run"]["episodes"],
         "steps_per_episode": cfg["run"]["steps_per_episode"],
@@ -596,6 +741,19 @@ def main() -> None:
         "executed_act_shape": list(executed_act_arr.shape),
         "feature_names": FEATURE_NAMES,
         "action_names": ACTION_NAMES,
+        "lidar": {
+            "enabled": lidar_cfg["enabled"],
+            "env_num_beams": lidar_cfg["num_beams"],
+            "clip_min": lidar_cfg["clip_min"],
+            "clip_max": lidar_cfg["clip_max"],
+            "store_raw": lidar_cfg["store_raw"],
+            "dtype": lidar_cfg["dtype"],
+            "binning": lidar_cfg["binning"],
+            "lidar_shape": list(lidar_arr.shape) if lidar_arr is not None else None,
+            "next_lidar_shape": list(lidar_next_arr.shape) if lidar_next_arr is not None else None,
+            "raw_lidar_shape": list(raw_lidar_arr.shape) if raw_lidar_arr is not None else None,
+            "next_raw_lidar_shape": list(raw_lidar_next_arr.shape) if raw_lidar_next_arr is not None else None,
+        },
     }
 
     if stmpc_status_codes is not None:

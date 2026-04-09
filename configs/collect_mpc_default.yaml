@@ -1,99 +1,91 @@
 # MPC Data Collection Configuration
-# This file controls the behavior of the MPC data collector for imitation learning.
+# Use this as the base config for single-map collection runs.
 
 run:
-  # Number of episodes to collect
-  episodes: 10
-  # Safety timeout in steps (episode should normally end by lap target)
-  steps_per_episode: 6000
-  # Whether to render during collection
-  render: false
-  # Whether to use env.reset() default behavior (false = use bridge start pose)
-  use_default_reset: false
+  episodes: 10  # Number of episodes to collect
+  steps_per_episode: 6000  # Safety timeout in steps (episode should end by lap target before this)
+  render: false  # Render visualization during collection (disable for batch runs)
+  use_default_reset: false  # Use bridge start pose (false) instead of env.reset() default
   lap_termination:
-    enabled: true
-    target_laps: 1
-    method: s_wrap
-    wrap_threshold_ratio: 0.2
+    enabled: true  # Terminate episodes when lap count is reached
+    target_laps: 1  # Number of completed laps before terminating episode
+    method: s_wrap  # Lap detection via centerline arclength wrap-around
+    wrap_threshold_ratio: 0.2  # Wrap threshold as fraction of track (0.2 = wrap detected at 80%-to-20% transition)
     auto_timeout:
-      enabled: true
-      timeout_factor: 2.0
-      min_expected_speed_ratio: 0.5
+      enabled: true  # Auto-calculate episode timeout based on expected lap speed
+      timeout_factor: 2.0  # Multiply expected lap time by this factor (if too low, episodes truncate early)
+      min_expected_speed_ratio: 0.5  # Minimum speed assumption for lap-time estimation
 
 env:
-  # Map name (must exist in maps/)
-  map: Spielberg
-  # Timestep for simulation
-  timestep: 0.01
-  # Integration method: rk4, euler
-  integrator: rk4
-  # Legacy field (collector now derives model from controller.mode settings below)
-  model: ks
+  map: Spielberg  # Map name (must exist in maps/ directory)
+  track_direction: normal  # Track direction: normal or reverse (for data diversity)
+  timestep: 0.01  # Simulation timestep in seconds (0.01s = 100Hz)
+  integrator: rk4  # Integration method: rk4 (recommended, accurate) or euler (faster)
+  model: ks  # Legacy field (collector derives from controller.mode)
 
 controller:
-  # Choose expert controller: kmpc (constant target speed) or stmpc (dynamic speed + steering)
-  mode: kmpc
-  # Shared nominal speed target (m/s)
-  ref_speed: 4.0
-  # Parameters used when controller.mode = kmpc
+  mode: kmpc  # Expert controller: kmpc (constant speed) or stmpc (dynamic speed/steering)
+  ref_speed: 4.0  # Reference speed target for MPC (m/s)
   kmpc:
-    model: ks
-    observation_type: kinematic_state
+    model: ks  # Bicycle model: ks (kinematic single-track)
+    observation_type: kinematic_state  # Obs format: kinematic_state (5-dim) or frenet_dynamic_state
     speed_profile:
-      enabled: true
-      # Limit speed by curvature: v <= sqrt(a_lat_max / (|kappa| + kappa_epsilon))
-      a_lat_max: 3.5
-      min_speed: 1.8
-      max_speed: 4.0
-      kappa_epsilon: 0.001
-      smoothing_window: 11
-  # Parameters used when controller.mode = stmpc
+      enabled: true  # Enable curvature-based speed limiting (safer in corners)
+      a_lat_max: 3.5  # Max lateral acceleration constraint (m/s²) - determines speed in curves
+      min_speed: 1.8  # Minimum speed to maintain (m/s)
+      max_speed: 4.0  # Maximum speed ceiling (m/s)
+      kappa_epsilon: 0.001  # Small constant to avoid division-by-zero for low curvature
+      smoothing_window: 11  # Curvature smoothing window (larger = smoother speed profile)
   stmpc:
-    training_mode: race
-    model: std
-    observation_type: frenet_dynamic_state
-    use_std_vehicle_params: true
-    startup_speed_offset: 1.5
-    reset_with_states: true
+    training_mode: race  # Single-track MPC mode: race (aggressive) or others
+    model: std  # Dynamic model: std (standard Pacejka tire model)
+    observation_type: frenet_dynamic_state  # Obs format: Frenet coords + vehicle dynamics
+    use_std_vehicle_params: true  # Use F1TENTH standard parameters (false = custom params dict)
+    startup_speed_offset: 1.5  # Initial speed offset added to ref_speed during reset (m/s)
+    reset_with_states: true  # Initialize vehicle state during reset (delta, yaw_rate, slip)
     initial_state:
-      delta: 0.0
-      speed: 3.0
-      yaw_rate: 0.0
-      slip_angle: 0.0
+      delta: 0.0  # Initial steering angle (radians, 0 = straight)
+      speed: 3.0  # Initial longitudinal speed (m/s)
+      yaw_rate: 0.0  # Initial yaw rate (rad/s, angular velocity)
+      slip_angle: 0.0  # Initial slip angle (radians, vehicle sideslip)
     runtime_tuning:
-      enabled: true
-      qalpha: 8.0
-      qn: 50.0
-      qv: 15.0
-      qddelta: 1.0
-      qjerk: 0.05
-      track_safety_margin: 0.30
-      v_max: 8.0
-      a_max: 3.0
-      jerk_max: 20.0
-      jerk_min: -20.0
-      ddelta_max: 1.8
-      ddelta_min: -1.8
-      alat_max: 4.5
+      enabled: true  # Enable online cost function weight tuning during collection
+      qalpha: 8.0  # Cost weight for heading alignment (Frenet alpha error)
+      qn: 50.0  # Cost weight for lateral deviation (Frenet n error)
+      qv: 15.0  # Cost weight for speed tracking error
+      qddelta: 1.0  # Cost weight for steering rate limiting
+      qjerk: 0.05  # Cost weight for jerk (acceleration change rate)
+      track_safety_margin: 0.30  # Safety margin to track boundary (meters)
+      v_max: 8.0  # Maximum speed during MPC horizon (m/s)
+      a_max: 3.0  # Maximum acceleration (m/s²)
+      jerk_max: 20.0  # Maximum jerk increase (m/s³)
+      jerk_min: -20.0  # Maximum jerk decrease (m/s³)
+      ddelta_max: 1.8  # Maximum steering rate (rad/s)
+      ddelta_min: -1.8  # Minimum steering rate (rad/s)
+      alat_max: 4.5  # Maximum lateral acceleration (m/s²)
+
+lidar:
+  enabled: false  # Collect lidar scan features in addition to state/action
+  env_num_beams: 360  # Number of simulated lidar beams in environment
+  clip_min: 0.0  # Minimum lidar range value after clipping (meters)
+  clip_max: 15.0  # Maximum lidar range value after clipping (meters) for near-field driving focus
+  store_raw: false  # Also store full-resolution raw scans (larger files)
+  dtype: float16  # Storage dtype for lidar arrays: float16 or float32
+  binning:
+    enabled: true  # Downsample scans before saving
+    n_bins: 60  # Number of pooled lidar bins saved per step
+    method: min  # Pooling method: min (obstacle-sensitive) or mean
 
 perturbation:
-  # Enable probabilistic perturbation (shove injection)
-  enabled: false
-  # Probability of perturbation at each step [0.0-1.0]
-  probability: 0.2
-  # Magnitude of steering shove (radians)
-  shove_magnitude: 0.3
-  # Minimum steps between perturbations (0 = no cooldown, random each step)
-  min_steps_between_shoves: 0
+  enabled: false  # Enable probabilistic steering shove injection for training diversity
+  probability: 0.2  # Probability of perturbation at each step (0.0-1.0, 0.2 = 20% perturbed)
+  shove_magnitude: 0.3  # Magnitude of steering shove (radians)
+  min_steps_between_shoves: 0  # Minimum steps between perturbations (0 = any, 20+ = cooldown)
 
 dagger:
-  # Enable DAgger-style dual action labeling
-  enabled: false
-  # Also collect the noise vectors applied (for analysis)
-  record_noise_vectors: true
+  enabled: false  # Enable DAgger-style dual action labeling (record expert + executed actions)
+  record_noise_vectors: true  # Also collect the noise vectors applied (for analysis)
 
 output:
-  # Output directory for .npz datasets and metadata
-  output_dir: outputs/datasets
-  # Optional custom filename (default: auto-generated with map + timestamp)
-  # output_filename: null
+  output_dir: outputs/datasets  # Output directory for .npz datasets and JSON metadata
+  # output_filename: null  # Optional custom filename (default: auto-generated with map/controller/timestamp)
