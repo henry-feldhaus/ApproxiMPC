@@ -66,6 +66,37 @@ PY
 # Install acados Python interface.
 RUN pip install --no-cache-dir -e /opt/acados/interfaces/acados_template
 
+# Install acados tera renderer at build time so runtime does not prompt for interactive download.
+RUN python - <<'PY'
+import os
+import platform
+import stat
+import urllib.request
+from pathlib import Path
+
+version = "v0.2.0"
+arch_map = {
+    "x86_64": "amd64",
+    "amd64": "amd64",
+    "aarch64": "arm64",
+    "arm64": "arm64",
+}
+machine = platform.machine().lower()
+arch = arch_map.get(machine)
+if arch is None:
+    raise RuntimeError(f"Unsupported architecture for t_renderer: {machine}")
+
+out_dir = Path("/opt/acados/bin")
+out_dir.mkdir(parents=True, exist_ok=True)
+out_path = out_dir / "t_renderer"
+url = f"https://github.com/acados/tera_renderer/releases/download/{version}/t_renderer-{version}-linux-{arch}"
+
+urllib.request.urlretrieve(url, out_path)
+mode = out_path.stat().st_mode
+out_path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+print(f"Installed t_renderer from: {url}")
+PY
+
 # Copy the full repository.
 COPY . /app
 

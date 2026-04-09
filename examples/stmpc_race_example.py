@@ -7,6 +7,7 @@ import gymnasium as gym
 import numpy as np
 
 import gymkhana  # noqa: F401  # ensures gym env registration
+from gymkhana.envs import GKEnv
 
 # Avoid importing through controllers package __init__, which currently pulls stale RL modules.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "controllers"))
@@ -32,6 +33,7 @@ def get_stmpc_race_config() -> dict:
         "training_mode": "race",
         "track_direction": "normal",
         "max_episode_steps": MAX_STEPS,
+        "params": GKEnv.f1tenth_std_vehicle_params(),
     }
 
 

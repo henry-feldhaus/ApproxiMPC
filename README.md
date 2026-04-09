@@ -20,6 +20,12 @@ Build the image:
 docker compose build app
 ```
 
+If you just pulled Dockerfile changes, rebuild to pick up baked dependencies (including acados `t_renderer`):
+
+```bash
+docker compose build --no-cache app
+```
+
 Run a shell in the container:
 
 ```bash
@@ -43,7 +49,7 @@ docker compose run --rm app bash -c "cd /app/examples && PYTHONPATH=/app python 
 Use this command to verify the main MPC path after changes:
 
 ```bash
-docker compose run --rm app bash -c 'cd /app && yes y | python -c "from acados_template.utils import get_tera; print(get_tera())" && PYTHONPATH=/app python - <<"PY"
+docker compose run --rm app bash -c 'cd /app && PYTHONPATH=/app python - <<"PY"
 import gymnasium as gym
 import numpy as np
 import gymkhana
@@ -106,4 +112,4 @@ Primary files for the current workflow:
 ## Notes
 
 - This repository is intended to be run in Docker/devcontainer environments.
-- If acados asks to install the tera renderer in an ephemeral container, use the `yes y | ... get_tera` bootstrap shown above in the same command session.
+- The Docker image installs acados `t_renderer` during build, so GUI/MPC runs should not prompt for an interactive tera download after rebuild.
