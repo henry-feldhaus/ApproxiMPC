@@ -1,7 +1,10 @@
 """Controller abstraction layer for F1TENTH analysis scripts."""
 
 from .base import Controller
-from .learned_controller import LearnedController
+
+# Lazy import for LearnedController to avoid requiring stable_baselines3 for MPC-only workflows
+LearnedController = None
+
 from .mpc.stmpc_controller import STMPCController
 from .steer_controller import (
     BETA_GAIN,
@@ -52,7 +55,9 @@ def create_controller(
         case "learned":
             if model_path is None:
                 raise ValueError("model_path required for learned controller")
-            return LearnedController(model_path=model_path, map=map)
+            # Lazy import to avoid requiring stable_baselines3 for MPC-only workflows
+            from .learned_controller import LearnedController as _LearnedController
+            return _LearnedController(model_path=model_path, map=map)
 
         case "stable":
             return PDStabilityController(target_speed=target_speed, map=map)

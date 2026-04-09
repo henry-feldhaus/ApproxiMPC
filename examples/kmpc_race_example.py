@@ -1,26 +1,45 @@
 """Runner script for the Kinematic MPC controller on the F1TENTH gym."""
 
+import sys
+from pathlib import Path
+
 import gymnasium as gym
 import numpy as np
-from controllers.mpc.gym_bridge import KMPCGymBridge
+
+import gymkhana  # noqa: F401  # ensures gym env registration
+
+# Avoid importing through controllers package __init__, which currently pulls stale RL modules.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "controllers"))
+from mpc.gym_bridge import KMPCGymBridge
+
 from examples_utils import display_kinematic_state_obs
 
-from train.config.env_config import get_drift_test_config, get_env_id
-
 REF_SPEED = 4.0
+MAX_STEPS = 2000
+
+
+def get_kmpc_race_config() -> dict:
+    return {
+        "map": "Spielberg",
+        "num_agents": 1,
+        "timestep": 0.01,
+        "integrator": "rk4",
+        "model": "ks",
+        "control_input": ["speed", "steering_angle"],
+        "observation_config": {"type": "kinematic_state"},
+        "normalize_act": False,
+        "normalize_obs": False,
+        "training_mode": "race",
+        "track_direction": "normal",
+        "max_episode_steps": MAX_STEPS,
+    }
 
 
 def main():
-    config = get_drift_test_config()
-    config["model"] = "ks"
-    config["control_input"] = ["speed", "steering_angle"]
-    config["observation_config"] = {"type": "kinematic_state"}
-    config["normalize_act"] = False
-    config["normalize_obs"] = False
-    config["track_direction"] = "normal"
+    config = get_kmpc_race_config()
 
     env = gym.make(
-        get_env_id(),
+        "gymkhana:gymkhana-v0",
         config=config,
         render_mode="human",
     )
@@ -30,20 +49,24 @@ def main():
     x0, y0, yaw0 = bridge.get_start_pose()
     obs, info = env.reset(options={"poses": np.array([[x0, y0, yaw0]])})
 
-    done = False
     step = 0
     total_reward = 0.0
     env.render()
 
-    while not done:
+    while step < MAX_STEPS:
         action = bridge.get_action(obs)
-        obs, reward, done, truncated, info = env.step(action)
+        obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         display_kinematic_state_obs(step, obs, reward, total_reward)
         step += 1
         env.render()
 
-    print("Done")
+        if terminated or truncated:
+            print(f"Episode ended at step {step} (terminated={terminated}, truncated={truncated})")
+            break
+
+    print(f"Done. steps={step}, total_reward={total_reward:.2f}")
+    env.close()
 
 
 if __name__ == "__main__":

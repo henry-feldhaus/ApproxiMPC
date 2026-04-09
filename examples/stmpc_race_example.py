@@ -1,26 +1,45 @@
 """Runner script for the Single Track MPC controller on the F1TENTH gym (race mode)."""
 
+import sys
+from pathlib import Path
+
 import gymnasium as gym
 import numpy as np
-from controllers.mpc.gym_bridge import STMPCGymBridge
+
+import gymkhana  # noqa: F401  # ensures gym env registration
+
+# Avoid importing through controllers package __init__, which currently pulls stale RL modules.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "controllers"))
+from mpc.gym_bridge import STMPCGymBridge
 
 from examples.examples_utils import display_frenet_dynamic_state_obs
-from train.config.env_config import get_drift_test_config, get_env_id
 
 REF_SPEED = 4.0
+MAX_STEPS = 2000
+
+
+def get_stmpc_race_config() -> dict:
+    return {
+        "map": "Spielberg",
+        "num_agents": 1,
+        "timestep": 0.01,
+        "integrator": "rk4",
+        "model": "std",
+        "control_input": ["speed", "steering_angle"],
+        "observation_config": {"type": "frenet_dynamic_state"},
+        "normalize_act": False,
+        "normalize_obs": False,
+        "training_mode": "race",
+        "track_direction": "normal",
+        "max_episode_steps": MAX_STEPS,
+    }
 
 
 def main():
-    config = get_drift_test_config()
-    config["model"] = "std"
-    config["control_input"] = ["speed", "steering_angle"]
-    config["observation_config"] = {"type": "frenet_dynamic_state"}
-    config["normalize_act"] = False
-    config["normalize_obs"] = False
-    config["track_direction"] = "normal"
+    config = get_stmpc_race_config()
 
     env = gym.make(
-        get_env_id(),
+        "gymkhana:gymkhana-v0",
         config=config,
         render_mode="human",
     )
@@ -38,18 +57,20 @@ def main():
 
     env.render()
 
-    for step in range(10000):
+    for step in range(MAX_STEPS):
         action = bridge.get_action(obs)
         obs, reward, done, truncated, info = env.step(action)
         display_frenet_dynamic_state_obs(step, obs, reward)
         env.render()
 
         if done or truncated:
-            print(f"Episode ended at step {step} (recovered={info.get('recovered', False)})")
+            print(f"Episode ended at step {step} (terminated={done}, truncated={truncated})")
             obs, info = env.reset(options={"states": init_states})
             bridge.init_from_obs(obs)
+            break
 
     print("Done")
+    env.close()
 
 
 if __name__ == "__main__":

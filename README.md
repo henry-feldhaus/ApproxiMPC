@@ -1,346 +1,109 @@
 [![gymkhana](https://img.shields.io/pypi/v/gymkhana)](https://pypi.org/project/gymkhana/)
 [![python_version](https://img.shields.io/badge/Python-%3E=3.10-purple)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
-[![Python 3.10-3.12](https://github.com/TeoIlie/Gym-Khana/actions/workflows/ci.yml/badge.svg)](https://github.com/TeoIlie/Gym-Khana/actions/workflows/ci.yml)
-[![Code Style](https://github.com/TeoIlie/Gym-Khana/actions/workflows/lint.yml/badge.svg)](https://github.com/TeoIlie/Gym-Khana/actions/workflows/lint.yml)
-[![Documentation](https://readthedocs.org/projects/gym-khana/badge/?version=latest)](https://gym-khana.readthedocs.io/en/latest/)
 
-# Gym-Khana
+# Gym-Khana (Minimal MPC Workflow)
 
-<a href="https://gym-khana.readthedocs.io/en/latest/">
-<img src="https://raw.githubusercontent.com/TeoIlie/Gym-Khana/main/docs/assets/gymkhana.svg" alt="logo" align="right" width="40%" />
-</a>
+This repository is currently maintained as a minimal, container-first workflow for:
 
-This repository contains a custom gym environment for training Deep Reinforcement Learning policies to race and drift on 1/10 scale or full-size Ackermann vehicles. **SB3** and **wandb** integration included. Based on the f1tenth_gym simulator built by UPenn. For detailed information see the [documentation](https://gym-khana.readthedocs.io/en/latest/)
+1. Running MPC in simulation.
+2. Collecting trajectories.
+3. Supporting downstream imitation learning (for example, LSTM training outside this repo).
 
-## Quickstart
+The RL training/test/CI surfaces were intentionally removed to keep the codebase focused on MPC data generation.
 
-Gym-Khana is available as a PyPI package with only the gym environment, or as a full repository with additional functionality.
+## Quick Start (Container-First)
 
-Install the gym environment from PyPI with:
+Build the image:
 
-```bash
-pip install gymkhana
-```
-
-Alternatively, to use all features, or for development (training, controllers, analysis, etc.), clone the full repo and install dependencies using `uv`:
-
-```bash
-git clone --recurse-submodules https://github.com/TeoIlie/Gym-Khana.git
-cd Gym-Khana
-uv sync --all-groups
-source .venv/bin/activate # or, instead of sourcing, prefix commands with `uv run`
-```
-
-Then you're off to the races! 🏎️
-
-![Demo](https://raw.githubusercontent.com/TeoIlie/Gym-Khana/main/figures/F1TENTH_PPO_Drift.gif)
-
-You can run a quick waypoint follow example:
-
-```bash
-cd examples
-uv run python waypoint_follow.py
-```
-
-Or a simple centerline follow example:
-```bash
-cd examples
-uv run python controller_example.py
-```
-
-## Docker / Containerization
-
-For team portability and environment consistency, the project includes Docker and VS Code devcontainer support. **acados** is built automatically inside the container, eliminating local build dependencies.
-
-### Quick Start with Docker
-
-CPU-only (default, works on all systems):
 ```bash
 docker compose build app
+```
+
+Run a shell in the container:
+
+```bash
 docker compose run --rm app
 ```
 
-GPU-enabled (NVIDIA driver required):
-```bash
-docker compose --profile gpu build app
-docker compose --profile gpu run --rm app-gpu
-```
-
-### VS Code DevContainer
-
-1. Install the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension.
-2. Open the repository in VS Code.
-3. Click the green **><** icon in the bottom-left corner and select **Reopen in Container**.
-4. The environment will build automatically on first open; subsequent opens are instant (uses persistent named volume for `.venv`).
-
-### Container Mount Strategy
-
-- Repository bind-mounted to `/app` (source of truth from compose).
-- Python virtual environment (`.venv/`) in a named volume for persistence across rebuilds.
-- X11 socket available for GUI rendering on Linux/X11 systems (e.g., pygame, PyQt).
-- DISPLAY environment variable auto-forwarded.
-
-### Inside the Container
-
-All commands are identical to local development.
-
-Run an MPC example:
-```bash
-cd examples
-uv run python kmpc_race_example.py
-```
-
-Run tests:
-```bash
-MPLBACKEND=Agg uv run pytest -q
-```
-
-## Additional Dependencies
-
-MPC controllers require dependencies that cannot be installed via pip alone. For the reference MPC implementation see the ForzaETH [race_stack](https://github.com/ForzaETH/race_stack)
-
-**acados** (build from source) — see the official [installation docs](https://docs.acados.org/installation/index.html) and [Python interface docs](https://docs.acados.org/python_interface/index.html):
+Run the kinematic MPC GUI example:
 
 ```bash
-# acados (build from source) - ~/software is only an example install directory
-git clone https://github.com/acados/acados.git --recurse-submodules ~/software/acados
-cd ~/software/acados && mkdir build && cd build
-cmake -DACADOS_WITH_QPOASES=ON ..
-make install -j$(nproc)
-
-# Environment variables (add to shell profile)
-export ACADOS_SOURCE_DIR=~/software/acados
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/software/acados/lib
-
+docker compose run --rm app bash -c "cd /app/examples && PYTHONPATH=/app python kmpc_race_example.py"
 ```
 
-Next, install the `acados_template` inside your virtual environment, with editable mode. For example, after `uv sync`, run the following command:
+Run the single-track MPC GUI example:
 
 ```bash
-# Python interface
-pip install -e ~/software/acados/interfaces/acados_template
+docker compose run --rm app bash -c "cd /app/examples && PYTHONPATH=/app python stmpc_race_example.py"
 ```
 
-## Training
-The main racing training script is at `train/ppo_race.py`. The recovery training script is at `train/ppo_recover.py`. Both include functionality for:
-1. **Train** (`--m t`): Train a new model with parallel environments using `SubprocVecEnv` and `train/config` params
-2. **Evaluate** (`--m e`): Evaluate a trained model with visualization
-3. **Download** (`--m d`): Fetch a model from **wandb** and evaluate it
-4. **Continue** (`--m c`): Continue training an existing model from a checkpoint
-5. **Transfer** (`--m f`): Transfer a pretrained model to a new task, preserving network weights but resetting optimizer, LR schedule, and optionally resetting `log_std` for fresh exploration, and resetting critic network for fresh value approximation. Useful for transferring learned dynamics knowledge (e.g. racing to recovery).
+## Baseline Verification Command
 
-For example, train a racing model with:
+Use this command to verify the main MPC path after changes:
 
 ```bash
-uv run python train/ppo_race.py --m t
+docker compose run --rm app bash -c 'cd /app && yes y | python -c "from acados_template.utils import get_tera; print(get_tera())" && PYTHONPATH=/app python - <<"PY"
+import gymnasium as gym
+import numpy as np
+import gymkhana
+import sys
+
+sys.path.insert(0, "/app/examples/controllers")
+from mpc.gym_bridge import KMPCGymBridge
+
+config = {
+    "map": "Spielberg",
+    "num_agents": 1,
+    "timestep": 0.01,
+    "integrator": "rk4",
+    "model": "ks",
+    "control_input": ["speed", "steering_angle"],
+    "observation_config": {"type": "kinematic_state"},
+    "normalize_act": False,
+    "normalize_obs": False,
+    "training_mode": "race",
+    "track_direction": "normal",
+    "max_episode_steps": 2000,
+}
+
+env = gym.make("gymkhana:gymkhana-v0", config=config, render_mode="human")
+bridge = KMPCGymBridge(env, ref_speed=4.0)
+x0, y0, yaw0 = bridge.get_start_pose()
+obs, _ = env.reset(options={"poses": np.array([[x0, y0, yaw0]])})
+
+steps = 0
+total_reward = 0.0
+while steps < 400:
+    action = bridge.get_action(obs)
+    obs, reward, terminated, truncated, _ = env.step(action)
+    total_reward += reward
+    env.render()
+    steps += 1
+    if terminated or truncated:
+        break
+
+print(f"MPC GUI baseline complete: steps={steps}, total_reward={total_reward:.2f}")
+env.close()
+PY'
 ```
 
-Detailed usage guidelines are at the top of the training script files.
+Expected baseline metric in this trimmed state:
+- `steps=400`
+- `total_reward=74.70`
 
-## Configuration
+## Project Layout (Current)
 
-### Default Gym/RL configurations
+Primary files for the current workflow:
 
-Default configurations are stored in `/train/config/env_config.py`, with parameters coming from `train/config/rl_config.yaml` and `train/config/gym_config.yaml`. This exposes all necessary Gym env and RL params for training, as well as default functions for getting Gym configs of RL training and testing environments:
+- `gymkhana/envs/gymkhana_env.py`: Environment core.
+- `examples/kmpc_race_example.py`: Main kinematic MPC runner.
+- `examples/stmpc_race_example.py`: Main single-track MPC runner.
+- `examples/controllers/mpc/gym_bridge.py`: MPC-to-environment bridge.
+- `MINIMAL_MPC_LSTM_WORKFLOW.md`: Minimal workflow notes.
+- `COPILOT.md`: Agent-oriented status and validation notes.
 
-1. `/train/config/env_config.py::get_drift_test_config()`
-2. `/train/config/env_config.py::get_drift_train_config()`
-3. `/train/config/env_config.py::get_recovery_test_config()`
-4. `/train/config/env_config.py::get_recovery_train_config()`
+## Notes
 
-### Callback and Curriculum Learning (CL) configuration
-
-Default `SB3` callbacks used during training are `WandbCallback`, `CheckpointCallback`, and `EvalCallback`. A custom `CurriculumLearningCallback` is also available, which gradually expands the recovery state initialization ranges as the agent's success rate improves.
-
-CL is configured in `/train/config/gym_config.yaml` under the `curriculum` heading by setting `enabled: true`. Parameters such as `n_stages`, `success_threshold`, and per-state ranges (`v_range`, `beta_range`, etc.) can be tuned there.
-
-Note that CL is only supported for recovery training, with the environment `training_mode` set to `"recover"`. Recovery training is accessed through the training script `train/ppo_recover.py`.
-
-### Debugging configuration
-
- `gym.make()` configurations:
- 
-1. Run with `render_mode` set to `human` to visualize the process
-2. Set `"render_track_lines": True` (it is `False` by default) to render the centerline  in **green** and the raceline in **red**
-3. Rendering track arc-length points **s** in Frenet coordinates at discrete intervals:
-    1. First, `"render_arc_length_annotations": True` (it is `False` by default) to render points along the centerline in **orange** 
-    2. Optionally, also set `"arc_length_annotation_interval"` to modify the point spacing (`2.0` metres by default)
-4. Set `"render_lookahead_curvatures": True` (it is `False` by default) to visualize lookahead curvature sampling points ahead of the vehicle in **yellow**. Optional parameters:
-5. Set `"debug_frenet_projection" = True` to visualize the Frenet coordinates are correct
-6. Set `"record_obs_min_max"` to `True/False` to record min/max observation values during training, and tweak normalization bounds if necessary, defined in `utils.py::calculate_norm_bounds`
-
-#### Control debug panel
-
-Set `show_ctr_debug: True` in `gymkhana/envs/rendering/rendering.yaml` to enable a real-time control debug panel below the map (PyQt6 renderer only). The panel shows:
-
-- **Actual vehicle state**: current steering angle (`delta`) and longitudinal velocity (`v_x`) in white
-- **Control commands**: raw steering and throttle commands with their bounds, colour-coded to match their bars (steering in blue, throttle in green)
-- **Two zero-centered horizontal bar gauges**: each bar spans the command's full range with the fill extending from zero toward the current value, making the sign and magnitude of each command instantly visible
-
-The panel tracks the currently followed agent (switched via mouse click), defaulting to the ego agent in map view. It is disabled by default to avoid overhead during training.
-
-#### Observation debug overlay
-
-Set `show_obs_debug: True` in `gymkhana/envs/rendering/rendering.yaml` to overlay all observation values on top of the map in the top-left corner (PyQt6 renderer only). The overlay displays:
-
-- **Feature names and values**: each observation feature as a key-value pair (e.g., `linear_vel_x: 2.3451`)
-- **Array summaries**: large arrays like LiDAR scans show count, min, max, and mean; small arrays (e.g., lookahead curvatures) show all values
-- **Normalization indicator**: shows `[norm: on]` when observation normalization is active; values are always displayed in raw physical units regardless of normalization
-
-Works with all observation types (`OriginalObservation`, `FeaturesObservation`, `VectorObservation`). For multi-agent environments, the overlay shows the followed agent's observations. Disabled by default to avoid overhead during training.
-
-### Important configuration options
-
-`gym.make()` configurations:
-
-1. Set `training_mode` to define the training goal. This modifies the reset, initialization, track, and reward settings:
-    1. `"race"` (default) is used by `train/ppo_race.py` for training racing policies 
-    2. `"recover"` is used by `train/ppo_recover.py` to train policies for stabilizing an out-of-control vehicle 
-2. Set `model` to `std` for drifting model with PAC2002 tire model
-3. Use `control_input` `["accl", "steering_angle"]` for best RL drift training
-4. Use parameter dictionary `params` as `GKEnv.f1tenth_std_vehicle_params()` or `GKEnv.f1tenth_std_drift_bias_params()` for drift parameters on 1/10 scale F1TENTH car
-5. Lookahead curvature/width observations can be configured with spacing and number parameters, and when `render_lookahead_curvatures": True` these will be reflected
-    1. `lookahead_n_points` - Number of lookahead points (default: 10)
-    2. `lookahead_ds` - Spacing between points in meters (default: 0.3m)
-    3. `sparse_width_obs` - `False` passes all lookahead point width values as observation, `True` only passes 1st and last. `True` is useful when track width varies very little (default: `False`)
-6. Set `normalize_obs` to `True/False` for normalizing the observation space. Only specific observation types can be normalized
-7. Set `normalize_act` to `True/False` for normalizing the action space. Supported for all action types
-8. Set `predictive_collision` to `True` to use TTC collision checking and `False` for Frenet-based collision checking. Note that this also modifies the reward function.
-9. Set `wall_deflection` to `False` to treat track edges as boundaries, and `True` to treat them as walls that cause a collision and halt the vehicle
-10. Reward configuration options:
-    1. `progress_gain`: set amount of gain by which to multiply forward progress reward. Must be >= 1
-    2. `out_of_bounds_penalty`: penalty for driving off the track boundary
-    3. `negative_vel_penalty`: penalty for driving backward
-    4. `max_episode_steps`: the maximum number of episode steps
-11. Set `track_direction` to define in which direction to drive around the track:
-    1. `normal` (default): drive around the track in the direction of the waypoints stored in the centerline and raceline files (Note this may be CW or CCW depending on the track map)
-    2. `reverse`: drive around in the opposite direction (For ex, CW instead of CCW)
-    3. `random`: randomly drive in the 'regular' or 'reverse' direction at each reset with a 50% chance, to learn left and right cornering equally when training a policy with RL
-
-`env.reset()` configurations:
-
-1. **Poses** and **States** can be used to initialize vehicles at specific configurations. Note:
-   - Only one of `poses` or `states` can be used per reset call (not both)
-   - All **[x, y, yaw]** values are in Cartesian coordinates
-   - To use Frenet coordinates, convert first using `frenet_to_cartesian()` in `gymkhana/envs/track/track.py`
-
-2. **Poses**: Reset agents at a specific pose
-   ```python
-   # Single agent
-   poses = np.array([[x, y, yaw]])
-   env.reset(options={"poses": poses})
-
-   # Multiple agents
-   poses = np.array([[x1, y1, yaw1],
-                     [x2, y2, yaw2]])
-   env.reset(options={"poses": poses})
-   ```
-
-3. **States**: Reset agents to a full 7-d state (only for `model='std'`)
-   ```python
-   # Single agent: [x, y, delta, v, yaw, yaw_rate, slip_angle]
-   states = np.array([[x, y, delta, v, yaw, yaw_rate, slip_angle]])
-   env.reset(options={"states": states})
-
-   # Front & rear angular wheel velocities are automatically initialized to form the full 9-d state for STD model type
-   ```
-
-## Wandb
-
-The wandb models are available here: <https://wandb.ai/teo-altum-quinque-queen-s-university/projects>
-
-## ONNX Policy Conversion
-
-To use policies in other packages, such as a ROS2 package for sim-to-real transfer, we provide support for converting an SB3 model to ONNX type. Use `train/export_onnx.py` for conversion:
-
-```bash
-uv run python train/export_onnx.py --path <SB3 model path>
-```
-
-Run the policy with ONNX using `OnnxPolicyRunner` defined in `gymkhana/inference/onnx_runner.py`. For example for a racing policy:
-
-```bash
-uv run python train/ppo_race.py --m x --path <ONNX model path>
-```
-
-## Custom Maps
-
-Custom maps can be created using the git submodule <https://github.com/TeoIlie/F1TENTH_Racetracks> stored in folder `/maps`. Once updated, pull the update submodule with `git pull --recurse-submodules`
-
-## Formatting/Linting
-
-Run formatting and auto-fixes manually with `ruff check --fix . && ruff format .` Fixes also are applied before commits due to `.pre-commit-config.yaml` file, with `pre-commit` dependency.
-
-## Important files
-
-* `gymkhana/envs/base_classes.py:503` defines the `step` method.
-  * the action space is defined as an `ndarray` with
-    1. the first element being desired **steering angle**
-    2. second element is desired **velocity**.
-* dynamics models are defined in `gymkhana/envs/dynamic_models`
-  * `single_track.py` models the single-track dynamics model, but only basic tire modelling
-  * `single_track_drift.py` models the single-track dynamics model with PAC2002 tire model, ideal for drift training
-  * `multi_body.py` models the car in greatest detail, but parameters are only available for a full-scale vehicle
-
-## Tire parameters
-
-* Parameters for the 1/10 scale f1tenth car to be used with the `STD` model are defined in `gymkhana/envs/gymkhana_env.py` as `f1tenth_std_vehicle_params`. They are created as a mix of existing f1tenth params and tire parameters adjusted from the fullscale car.
-* In future I may measure these parameters from real data for more accurate fitting
-* To maintain a history of parameter choices, and how they compare with the correct behaviour on the fullscale car, tests script `tests/model_validation/test_f1tenth_std_params.py` creates comparison figures along with parameter YAML file dump ordered by date created inside folder `figures/tire_params`
-
-## Documentation
-
-* Documentation is supported through ReadTheDocs Sphinx template at https://gym-khana.readthedocs.io
-* Tagged versions are available via the version selector in the docs (bottom-left flyout)
-* To update documentation modify `/docs` folder files and test locally, a rebuild will be triggered on push to default branch
-
-```bash
-cd docs
-make clean && make html && firefox _build/html/index.html
-```
-
-## Versioning
-
-This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`
-
-* **MAJOR**: Breaking changes (incompatible API/config changes)
-* **MINOR**: New features (backward-compatible)
-* **PATCH**: Bug fixes (backward-compatible)
-
-To release a new version:
-
-1. Update `version` in `pyproject.toml` and `__version__` in `gymkhana/__init__.py`
-2. Create and push a matching annotated git tag:
-
-```bash
-git tag -a v1.2.0 -m "description of release"
-git push origin v1.2.0
-```
-
-Pushing the tag automatically publishes to TestPyPI and PyPI via the `publish.yml` GitHub Actions workflow.
-
-
-## Known issues
-
-* Library support issues on Windows. You must use Python 3.8 as of 10-2021
-
-* On MacOS Big Sur and above, when rendering is turned on, you might encounter the error:
-
-```
-ImportError: Can't find framework /System/Library/Frameworks/OpenGL.framework.
-```
-
-You can fix the error by installing a newer version of pyglet:
-
-```bash
-pip3 install pyglet==1.5.11
-```
-
-And you might see an error similar to
-
-```
-gym 0.17.3 requires pyglet<=1.5.0,>=1.4.0, but you'll have pyglet 1.5.11 which is incompatible.
-```
-
-which could be ignored. The environment should still work without error.
+- This repository is intended to be run in Docker/devcontainer environments.
+- If acados asks to install the tera renderer in an ephemeral container, use the `yes y | ... get_tera` bootstrap shown above in the same command session.
