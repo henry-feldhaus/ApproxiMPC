@@ -35,14 +35,44 @@ docker compose run --rm app
 Run the kinematic MPC GUI example:
 
 ```bash
-docker compose run --rm app bash -c "cd /app/examples && PYTHONPATH=/app python kmpc_race_example.py"
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/kmpc_race.py"
 ```
 
 Run the single-track MPC GUI example:
 
 ```bash
-docker compose run --rm app bash -c "cd /app/examples && PYTHONPATH=/app python stmpc_race_example.py"
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/stmpc_race.py"
 ```
+
+Collect transition data with kinematic MPC (clean expert behavior):
+
+```bash
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_data.py"
+```
+
+Collect with perturbation injection and DAgger dual-action labeling:
+
+```bash
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_data.py --config /app/configs/collect_mpc_test.yaml"
+```
+
+Collect with custom configuration file:
+
+```bash
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_data.py --config /path/to/custom.yaml --render"
+```
+
+### Data Collection Configuration
+
+Edit `configs/collect_mpc_default.yaml` to customize collection behavior:
+- `run`: episodes, max steps, rendering, reset behavior
+- `env`: map, timestep, integrator, vehicle model
+- `controller`: MPC reference speed
+- `perturbation`: probabilistic noise injection (80% clean, 20% perturbed)
+- `dagger`: dual-action labeling for recovery learning
+- `output`: dataset directory and filename
+
+Datasets are saved as compressed NPZ files with metadata JSON. Fields include `expert_actions`, `executed_actions`, `is_perturbed` flag, and `noise_vectors` for imitation learning.
 
 ## Baseline Verification Command
 
@@ -102,12 +132,12 @@ Expected baseline metric in this trimmed state:
 
 Primary files for the current workflow:
 
-- `gymkhana/envs/gymkhana_env.py`: Environment core.
-- `examples/kmpc_race_example.py`: Main kinematic MPC runner.
-- `examples/stmpc_race_example.py`: Main single-track MPC runner.
-- `examples/controllers/mpc/gym_bridge.py`: MPC-to-environment bridge.
-- `MINIMAL_MPC_LSTM_WORKFLOW.md`: Minimal workflow notes.
-- `COPILOT.md`: Agent-oriented status and validation notes.
+- `src/kmpc_race.py`: Interactive kinematic MPC runner.
+- `src/stmpc_race.py`: Interactive single-track MPC runner.
+- `src/collect_mpc_data.py`: MPC data collection with YAML configuration.
+- `configs/collect_mpc_default.yaml`: Default data collection parameters.
+- `gymkhana/envs/gymkhana_env.py`: Gymnasium environment core.
+- `examples/controllers/mpc/gym_bridge.py`: MPC-environment bridge for action computation.
 
 ## Notes
 

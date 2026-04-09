@@ -1249,6 +1249,7 @@ class GKEnv(gym.Env):
         info = {
             "checkpoint_done": toggle_list,
             "episode_length": self.current_step,
+            "lap_counts": self.lap_counts[0],
         }
 
         # calc reward

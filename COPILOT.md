@@ -110,15 +110,15 @@ Unless explicitly requested, ignore RL-centric legacy surfaces:
 
 ## Immediate Next Technical Tasks (for future edits)
 
-1. Add a dedicated `examples/collect_mpc_trajectories.py` script for sequential data collection.
+1. Expand the `src/collect_mpc_data.py` collector with richer rollout options and map sweep support.
 2. Keep all trajectory generation commands container-first and path-stable.
-3. Validate one GUI MPC lap before batch collection.
+3. Validate one GUI MPC lap before large batch collection.
 
 ## Stage 1 Status (Completed)
 
 - Primary MPC entrypoints were decoupled from removed `train.config` dependencies:
-   - `examples/kmpc_race_example.py`
-   - `examples/stmpc_race_example.py`
+   - `src/kmpc_race.py`
+   - `src/stmpc_race.py`
 - Both scripts now build self-contained env configs and use `gymkhana:gymkhana-v0` directly.
 - Both scripts bypass stale `examples/controllers/__init__.py` import side effects by importing MPC bridge via:
    - `sys.path` insert of `examples/controllers`
@@ -200,11 +200,14 @@ Additional Stage-1 sanity checks:
    - `examples/video_recording.py`
 
 Active top-level examples are now intentionally minimal:
-- `examples/kmpc_race_example.py`
-- `examples/stmpc_race_example.py`
 - `examples/simple_gui_test.py`
 - `examples/waypoint_follow.py`
 - `examples/examples_utils.py`
+
+Source-driven MPC pipeline entrypoints:
+- `src/kmpc_race.py`
+- `src/stmpc_race.py`
+- `src/collect_mpc_data.py`
 
 Latest baseline result (post-Stage-2 trim):
 - `steps=400`

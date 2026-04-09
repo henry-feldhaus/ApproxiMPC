@@ -10,7 +10,7 @@ import gymkhana  # noqa: F401  # ensures gym env registration
 from gymkhana.envs import GKEnv
 
 # Avoid importing through controllers package __init__, which currently pulls stale RL modules.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "controllers"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples" / "controllers"))
 from mpc.gym_bridge import STMPCGymBridge
 
 from examples.examples_utils import display_frenet_dynamic_state_obs

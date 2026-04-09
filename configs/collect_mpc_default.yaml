@@ -1,0 +1,48 @@
+# MPC Data Collection Configuration
+# This file controls the behavior of the MPC data collector for imitation learning.
+
+run:
+  # Number of episodes to collect
+  episodes: 10
+  # Maximum steps per episode (actual may be less due to lap termination)
+  steps_per_episode: 2000
+  # Whether to render during collection
+  render: false
+  # Whether to use env.reset() default behavior (false = use bridge start pose)
+  use_default_reset: false
+
+env:
+  # Map name (must exist in maps/)
+  map: Spielberg
+  # Timestep for simulation
+  timestep: 0.01
+  # Integration method: rk4, euler
+  integrator: rk4
+  # Vehicle model: ks (kinematic), std (single-track dynamics)
+  model: ks
+
+controller:
+  # KMPC reference speed (m/s)
+  ref_speed: 4.0
+
+perturbation:
+  # Enable probabilistic perturbation (shove injection)
+  enabled: false
+  # Probability of perturbation at each step [0.0-1.0]
+  probability: 0.2
+  # Magnitude of steering shove (radians)
+  shove_magnitude: 0.3
+  # Minimum steps between perturbations (0 = no cooldown, random each step)
+  min_steps_between_shoves: 5
+
+dagger:
+  # Enable DAgger-style dual action labeling
+  enabled: false
+  # Also collect the noise vectors applied (for analysis)
+  record_noise_vectors: true
+
+output:
+  # Output directory for .npz datasets and metadata
+  output_dir: outputs/datasets
+  # Optional custom filename (default: auto-generated with map + timestamp)
+  # output_filename: null

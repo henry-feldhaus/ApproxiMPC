@@ -1,0 +1,28 @@
+# Minimal test configuration for quick validation
+run:
+  episodes: 2
+  steps_per_episode: 500
+  render: false
+  use_default_reset: false
+
+env:
+  map: Spielberg
+  timestep: 0.01
+  integrator: rk4
+  model: ks
+
+controller:
+  ref_speed: 4.0
+
+perturbation:
+  enabled: true
+  probability: 0.2
+  shove_magnitude: 0.3
+  min_steps_between_shoves: 0
+
+dagger:
+  enabled: true
+  record_noise_vectors: true
+
+output:
+  output_dir: outputs/datasets
