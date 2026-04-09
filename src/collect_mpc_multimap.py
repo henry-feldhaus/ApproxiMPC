@@ -151,6 +151,20 @@ def main() -> None:
     combos = build_combo_sequence(maps, directions)
     run_dir = build_run_dir(cfg, repo_root)
 
+    # Pre-compile acados in parallel mode to avoid concurrent .so compilation
+    if mode == "parallel":
+        print("Parallel mode enabled: pre-compiling acados model (sequential)...")
+        test_cfg_path = repo_root / "configs" / "collect_mpc_test.yaml"
+        if test_cfg_path.exists():
+            precompile_proc = subprocess.run(
+                [sys.executable, str(collector_script), "--config", str(test_cfg_path)],
+                capture_output=True,
+            )
+            if precompile_proc.returncode != 0:
+                print(f"WARNING: Acados pre-compilation returned code {precompile_proc.returncode}")
+                print(f"Stderr: {precompile_proc.stderr.decode()}")
+        print("Acados pre-compilation complete; starting parallel collection...\n")
+
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "multi_map_config": str(cfg_path),

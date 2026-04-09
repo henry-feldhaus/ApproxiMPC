@@ -49,6 +49,8 @@ Collect a full multi-map training dataset:
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_multimap.py --config /app/configs/collect_mpc_multimap_fullscale.yaml"
 ```
 
+When `execution.mode=parallel` is enabled, acados MPC solvers are automatically pre-compiled sequentially before parallel collection begins (this is a one-time cost, no manual steps needed).
+
 ## Data Output
 
 Collector outputs are compressed NPZ datasets plus JSON metadata.

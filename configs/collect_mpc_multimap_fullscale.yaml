@@ -21,7 +21,7 @@ run:
 
 execution:
   mode: parallel  # Parallel execution with multiple workers
-  max_workers: 2  # Max concurrent workers (2 GPUs assumed, adjust for your hardware)
+  max_workers: 4  # Max concurrent workers (CPU is substantial enough)
 
 output:
   root_dir: outputs/datasets/multimap_training  # Root directory for all multimap outputs
