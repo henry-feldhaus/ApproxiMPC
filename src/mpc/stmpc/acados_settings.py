@@ -32,6 +32,7 @@
 #
 # author: Daniel Kloeser
 
+import os
 from pathlib import Path
 from typing import Tuple
 
@@ -43,6 +44,14 @@ from .bicycle_model import bicycle_model
 from .indicies import StateIndex
 
 _MPC_DIR = Path(__file__).resolve().parent
+
+
+def _get_build_suffix() -> str:
+    tag = os.environ.get("APPROXIMPC_ACADOS_BUILD_TAG", "").strip()
+    if not tag:
+        return ""
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in tag)
+    return f"_{safe}" if safe else ""
 
 
 def acados_settings(
@@ -207,9 +216,10 @@ def acados_settings(
     ocp.solver_options.tol = 1e-2
     ocp.solver_options.print_level = 0
 
-    # create solver
-    ocp.code_export_directory = str(_MPC_DIR / "st_c_generated_code")
-    acados_solver = AcadosOcpSolver(ocp, json_file=str(_MPC_DIR / "st_acados_ocp.json"))
+    # Use per-process export paths in parallel runs to avoid build collisions.
+    suffix = _get_build_suffix()
+    ocp.code_export_directory = str(_MPC_DIR / f"st_c_generated_code{suffix}")
+    acados_solver = AcadosOcpSolver(ocp, json_file=str(_MPC_DIR / f"st_acados_ocp{suffix}.json"))
 
     return constraint, model, acados_solver, params
 

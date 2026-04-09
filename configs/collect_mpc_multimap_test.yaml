@@ -1,0 +1,40 @@
+# Quick multimap smoke test for parallel execution
+base_collector_config: configs/collect_mpc_default.yaml
+
+run:
+  maps:
+    - Spielberg
+    - Budapest
+    - Monza
+  directions:
+    - normal
+    - reverse
+  episodes_per_combo: 2
+  render: false
+  stop_on_error: false
+
+execution:
+  mode: parallel
+  max_workers: 4
+
+output:
+  root_dir: outputs/datasets/multimap_training
+  run_name: null
+
+collector_overrides:
+  lidar:
+    enabled: true
+    env_num_beams: 360
+    clip_min: 0.0
+    clip_max: 15.0
+    store_raw: false
+    dtype: float16
+    binning:
+      enabled: true
+      n_bins: 60
+      method: min
+  perturbation:
+    enabled: true
+    probability: 0.2
+  dagger:
+    enabled: true

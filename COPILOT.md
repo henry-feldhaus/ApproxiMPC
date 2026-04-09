@@ -37,8 +37,8 @@ Container-first execution is the default:
 
 - `src/collect_mpc_multimap.py` now supports `collector_overrides` via deep merge into `base_collector_config`.
 - `run.stop_on_error: false` means failed combos are skipped and the run continues.
-- `execution.mode: parallel` with `max_workers: N` runs up to N map/direction combos concurrently.
-- When parallel mode is enabled, acados MPC solvers are automatically pre-compiled sequentially before collection starts (automatic, no manual steps).
+- `execution.mode: parallel` with `max_workers: N` runs combos concurrently.
+- Each combo process uses an isolated acados build tag (`APPROXIMPC_ACADOS_BUILD_TAG`) so parallel codegen/link steps do not collide.
 - `lidar` collection is integrated: when `lidar.enabled=true`, scans are extracted (360 beams), clipped [0, 15.0m], binned (360→60 via min-pooling), and stored as float16 NPZ arrays.
 
 ## Next Technical Steps (Priority Order)

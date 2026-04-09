@@ -32,7 +32,9 @@
 #
 
 # author: Daniel Kloeser
+# editor: Henry Feldhaus
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +44,14 @@ from ..config import CarConfig, KMPCConfig
 from .bicycle_model import bicycle_model
 
 _MPC_DIR = Path(__file__).resolve().parent
+
+
+def _get_build_suffix() -> str:
+    tag = os.environ.get("APPROXIMPC_ACADOS_BUILD_TAG", "").strip()
+    if not tag:
+        return ""
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in tag)
+    return f"_{safe}" if safe else ""
 
 
 def acados_settings(s0, kapparef, vx_ref, d_left, d_right, kmpc_config: KMPCConfig, car_config: CarConfig):
@@ -211,9 +221,10 @@ def acados_settings(s0, kapparef, vx_ref, d_left, d_right, kmpc_config: KMPCConf
     ocp.solver_options.print_level = 0
     ocp.solver_options.nlp_solver_tol_comp = 1e-1
 
-    # create solver
-    ocp.code_export_directory = str(_MPC_DIR / "ks_c_generated_code")
-    acados_solver = AcadosOcpSolver(ocp, json_file=str(_MPC_DIR / "ks_acados_ocp.json"))
+    # Use per-process export paths in parallel runs to avoid build collisions.
+    suffix = _get_build_suffix()
+    ocp.code_export_directory = str(_MPC_DIR / f"ks_c_generated_code{suffix}")
+    acados_solver = AcadosOcpSolver(ocp, json_file=str(_MPC_DIR / f"ks_acados_ocp{suffix}.json"))
 
     return constraint, model, acados_solver, params
 

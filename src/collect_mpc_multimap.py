@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -73,6 +74,7 @@ def run_combo(
     collector_script: Path,
     collector_cfg: dict,
     combo_cfg_path: Path,
+    combo_id: int,
     map_name: str,
     direction: str,
     episodes_per_combo: int,
@@ -93,9 +95,13 @@ def run_combo(
 
     combo_cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
 
+    env = dict(os.environ)
+    env["APPROXIMPC_ACADOS_BUILD_TAG"] = f"combo_{combo_id}"
+
     return subprocess.run(
         [sys.executable, str(collector_script), "--config", str(combo_cfg_path)],
         check=False,
+        env=env,
     )
 
 
@@ -151,20 +157,6 @@ def main() -> None:
     combos = build_combo_sequence(maps, directions)
     run_dir = build_run_dir(cfg, repo_root)
 
-    # Pre-compile acados in parallel mode to avoid concurrent .so compilation
-    if mode == "parallel":
-        print("Parallel mode enabled: pre-compiling acados model (sequential)...")
-        test_cfg_path = repo_root / "configs" / "collect_mpc_test.yaml"
-        if test_cfg_path.exists():
-            precompile_proc = subprocess.run(
-                [sys.executable, str(collector_script), "--config", str(test_cfg_path)],
-                capture_output=True,
-            )
-            if precompile_proc.returncode != 0:
-                print(f"WARNING: Acados pre-compilation returned code {precompile_proc.returncode}")
-                print(f"Stderr: {precompile_proc.stderr.decode()}")
-        print("Acados pre-compilation complete; starting parallel collection...\n")
-
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "multi_map_config": str(cfg_path),
@@ -205,6 +197,7 @@ def main() -> None:
                     collector_script=collector_script,
                     collector_cfg=base_collector_cfg,
                     combo_cfg_path=combo_cfg_path,
+                    combo_id=idx,
                     map_name=map_name,
                     direction=direction,
                     episodes_per_combo=episodes_per_combo,
@@ -234,6 +227,7 @@ def main() -> None:
                 collector_script=collector_script,
                 collector_cfg=base_collector_cfg,
                 combo_cfg_path=combo_cfg_path,
+                combo_id=idx,
                 map_name=map_name,
                 direction=direction,
                 episodes_per_combo=episodes_per_combo,
