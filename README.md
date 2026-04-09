@@ -23,39 +23,198 @@ Primary configs:
 - `configs/collect_mpc_test.yaml`: perturbation-enabled single-run test config.
 - `configs/collect_mpc_multimap_fullscale.yaml`: full batch collection plan.
 
-## Quick Start (Docker, Recommended)
+## Getting Started
 
-Build:
+### Prerequisites
+
+- **Docker** (recommended) with Docker Compose for isolated environment
+- **Git** for version control and submodule management
+- **4+ GB free disk space** for datasets and build artifacts
+- **Sufficient CPU** (4+ cores recommended for parallel execution)
+
+### Development Container Setup
+
+The recommended approach is to use Docker for a consistent, reproducible environment.
+
+**1. Build the Docker image:**
 
 ```bash
 docker compose build app
 ```
 
-Run kinematic MPC GUI:
+This builds a NVIDIA PyTorch container with all MPC and simulation dependencies pre-installed.
+
+**2. Verify the setup by running a quick MPC test:**
 
 ```bash
-docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/kmpc_race.py"
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python - <<"PY"
+import gymnasium as gym
+import gymkhana
+print("✓ Gymnasium and Gymkhana imports successful")
+PY"
 ```
 
-Collect a single-map dataset (default config):
+### Data Collection Workflows
+
+ApproxiMPC uses YAML-driven configuration for all data collection. Collections produce compressed NPZ datasets with metadata in JSON.
+
+#### Quick Validation (5-10 min)
+
+Test the full pipeline with minimal data:
+
+```bash
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_multimap.py --config /app/configs/collect_mpc_multimap_test.yaml"
+```
+
+This runs 3 maps × 2 directions × 2 episodes with 4 parallel workers.
+
+#### Single-Map Collection (10-15 min)
+
+Collect from one track with default settings:
 
 ```bash
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_data.py"
 ```
 
-Collect a full multi-map training dataset:
+Output: `outputs/datasets/kmpc_Spielberg_<timestamp>.npz` + `.json`
+
+#### Full-Scale Multi-Map Collection (1.5-2 hours)
+
+Generate comprehensive training dataset across 7 test tracks with perturbations and DAgger labels:
 
 ```bash
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_multimap.py --config /app/configs/collect_mpc_multimap_fullscale.yaml"
 ```
 
-**Note on parallel execution**: `collect_mpc_multimap_fullscale.yaml` is configured for parallel execution (`max_workers: 4`). Each worker now uses an isolated acados build tag to avoid shared-library/codegen collisions.
+This runs:
+- **7 maps**: Spielberg, Budapest, Monza, Spa, Silverstone, Melbourne, Montreal
+- **2 directions each** (normal + reverse)
+- **10 episodes per combo** for rich diversity
+- **Parallel execution** with 4 concurrent collectors
+- **Lidar data** (360 beams → 60 bins, clipped 0-15m)
+- **Perturbations** (20% stochastic steering shoves)
+- **DAgger labels** (expert + perturbed action pairs)
+
+Output: `outputs/datasets/multimap_training/run_<timestamp>/` containing all map/direction/episode datasets.
+
+#### Interactive MPC Visualization
+
+Run the kinematic MPC controller in GUI mode (requires display):
+
+```bash
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/kmpc_race.py"
+```
+
+Or single-track dynamic MPC:
+
+```bash
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/stmpc_race.py"
+```
+
+### Configuring Data Collection
+
+All collection parameters are in YAML. Three canonical configs provided:
+
+**`configs/collect_mpc_default.yaml`** (base/reference):
+- Single map, single direction, default settings
+- Lidar disabled (backward compatible)
+- No perturbations or DAgger
+- Use this as a template to customize
+
+**`configs/collect_mpc_test.yaml`** (validation):
+- Single map, 2 episodes for quick smoke testing
+- Lidar, perturbations, and DAgger enabled
+- ~5 min runtime
+
+**`configs/collect_mpc_multimap_fullscale.yaml`** (production):
+- 7 maps × 2 directions × 10 episodes
+- Parallel execution (4 workers)
+- All features enabled (lidar, perturbation, DAgger)
+
+### Customizing Configs
+
+Edit any YAML to override parameters:
 
 ```yaml
-execution:
-  mode: parallel
-  max_workers: 4
+run:
+  maps:
+    - Spielberg        # which tracks
+    - Budapest
+  episodes_per_combo: 5 # how many laps per track
+
+env:
+  track_direction: normal # or "reverse" for counter-clockwise
+
+controller:
+  mode: kmpc           # "kmpc" or "stmpc"
+  ref_speed: 4.0       # reference velocity (m/s)
+
+lidar:
+  enabled: true        # collect lidar scans
+  clip_max: 15.0       # clip range (0-15m recommended for racing)
+  binning:
+    n_bins: 60         # downsample 360 beams to 60
+
+perturbation:
+  enabled: true        # inject stochastic steering shoves
+  probability: 0.2     # 20% of steps perturbed
+
+dagger:
+  enabled: true        # record expert recovery labels
 ```
+
+### Understanding Dataset Output
+
+Each collection produces an NPZ file (compressed NumPy array) + JSON metadata.
+
+NPZ contents:
+- `state_vector` (N, 5) float32: [pose_x, pose_y, theta, delta, vx]
+- `action` (N, 2) float32: [steer_cmd, throttle_cmd]
+- `lidar_scans` (N, 60) float16: binned/clipped lidar (when enabled)
+- `is_perturbed` (N,) bool: which steps had perturbations
+- `dagger_actions` (N, 2) float32: expert recovery labels (when enabled)
+
+JSON metadata:
+- Collection parameters (map, direction, episodes, controller type, etc.)
+- Lidar processing details (clipping, binning, FOV)
+- Episode summaries (reward, lap count, termination reason)
+
+### Training with Collected Data
+
+Datasets are organized by map/direction for easy curriculum or full-batch training:
+
+```
+outputs/datasets/multimap_training/run_<timestamp>/
+├── Spielberg/
+│   ├── normal/
+│   │   ├── kmpc_Spielberg_normal.npz    (all episodes concatenated)
+│   │   └── kmpc_Spielberg_normal.json   (metadata)
+│   └── reverse/
+├── Budapest/
+└── ... (other maps)
+```
+
+**Load data in Python:**
+
+```python
+import numpy as np
+import json
+
+# Load single map/direction combo
+data = np.load("outputs/datasets/multimap_training/run.../Spielberg/normal/kmpc_Spielberg_normal.npz")
+states = data["state_vector"]           # shape (N, 5)
+actions = data["action"]                # shape (N, 2)
+lidar = data["lidar_scans"]             # shape (N, 60) if enabled
+
+with open("...json") as f:
+    metadata = json.load(f)
+    clip_max = metadata["lidar"]["clip_max"]  # your clipping threshold
+```
+
+**Downstream training** (LSTM, Transformer, etc.) typically uses:
+- Input: concatenated [states, lidar] or just states
+- Target: actions (or dagger_actions for imitation learning)
+- Framework: PyTorch, TensorFlow, etc. (external to this repo)
 
 ## Data Output
 
