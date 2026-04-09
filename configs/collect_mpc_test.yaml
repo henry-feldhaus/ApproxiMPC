@@ -2,41 +2,47 @@
 # Use this to test perturbation injection and DAgger labeling on a single map.
 
 run:
-  episodes: 2  # Minimal episodes for quick test (normally 10+)
-  steps_per_episode: 500  # Minimal steps for quick test
-  render: false  # Disable rendering for headless test runs
-  use_default_reset: false  # Use bridge start pose
+  episodes: 2                 # Minimal episodes for quick test (normally 10+)
+  steps_per_episode: 500      # Minimal steps for quick test
+  render: false               # Disable rendering for headless test runs
+  use_default_reset: false    # Use bridge start pose
+  lap_termination:
+    enabled: true               # Terminate episodes when lap count is reached
+    target_laps: 1              # Number of completed laps before terminating episode
+    method: s_wrap              # Lap detection via centerline arclength wrap-around
 
 env:
-  map: Spielberg  # Map name (test on single map for speed)
-  timestep: 0.01  # Standard simulation timestep
-  integrator: rk4  # RK4 integrator
-  model: ks  # Legacy field
+  map: Spielberg              # Map name (test on single map for speed)
+  track_direction: normal     # Track direction (normal or reverse)
+  timestep: 0.01              # Standard simulation timestep
+  integrator: rk4             # RK4 integrator
+  model: ks                   # Legacy field
 
 controller:
-  ref_speed: 4.0  # Standard reference speed
+  mode: kmpc                  # Test with kinematic MPC controller
+  ref_speed: 4.0              # Standard reference speed
 
 lidar:
-  enabled: true  # Enable lidar collection for validation run
-  env_num_beams: 360  # Simulated lidar beam count
-  clip_min: 0.0  # Minimum clipped lidar range (meters)
-  clip_max: 15.0  # Maximum clipped lidar range (meters) for near-field focus
-  store_raw: false  # Keep dataset small for quick tests
-  dtype: float16  # Compact lidar storage type
+  enabled: true               # Enable lidar collection for validation run
+  env_num_beams: 360          # Simulated lidar beam count
+  clip_min: 0.0               # Minimum clipped lidar range (meters)
+  clip_max: 15.0              # Maximum clipped lidar range (meters) for near-field focus
+  store_raw: false            # Keep dataset small for quick tests
+  dtype: float16              # Compact lidar storage type
   binning:
-    enabled: true  # Enable downsampling of lidar scans
-    n_bins: 60  # Number of bins stored per scan
-    method: min  # Min pooling preserves nearest obstacle signal
+    enabled: true             # Enable downsampling of lidar scans
+    n_bins: 60                # Number of bins stored per scan
+    method: min               # Min pooling preserves nearest obstacle signal
 
 perturbation:
-  enabled: true  # ENABLE perturbations (main test differentiator)
-  probability: 0.2  # 20% of steps receive random steering shove
-  shove_magnitude: 0.3  # Steering shove magnitude (radians)
-  min_steps_between_shoves: 0  # Allow shoves every step (no cooldown)
+  enabled: true               # ENABLE perturbations (main test differentiator)
+  probability: 0.2            # 20% of steps receive random steering shove
+  shove_magnitude: 0.3        # Steering shove magnitude (radians)
+  min_steps_between_shoves: 0 # Allow shoves every step (no cooldown)
 
 dagger:
-  enabled: true  # ENABLE DAgger dual-action labeling
+  enabled: true               # ENABLE DAgger dual-action labeling
   record_noise_vectors: true  # Record the noise vectors for analysis
 
 output:
-  output_dir: outputs/datasets  # Save test output to standard location
+  output_dir: outputs/datasets # Save test output to standard location

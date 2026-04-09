@@ -12,39 +12,39 @@ run:
     - Silverstone
     - Melbourne
     - Montreal
-  directions:  # Directions to sweep (order alternates per map: map1=[normal, reverse], map2=[reverse, normal], ...)
+  directions:  # Directions to sweep (order alternates per map)
     - normal
     - reverse
-  episodes_per_combo: 10  # Episodes per (map, direction) combination
-  render: false  # Disable rendering for unattended batch runs
-  stop_on_error: false  # Continue on failure (skip failed combo, continue to next)
+  episodes_per_combo: 10      # Episodes per (map, direction) combination
+  render: false               # Disable rendering for unattended batch runs
+  stop_on_error: false        # Continue on failure (skip failed combo, continue to next)
 
 execution:
-  mode: parallel  # Parallel execution with isolated per-worker acados build artifacts
-  max_workers: 4  # Max concurrent workers (CPU substantial)
+  mode: parallel              # Parallel execution with isolated per-worker acados build artifacts
+  max_workers: 4              # Max concurrent workers (CPU substantial)
 
 output:
   root_dir: outputs/datasets/multimap_training  # Root directory for all multimap outputs
-  run_name: null  # Auto-generate UTC timestamp name (e.g., run_20260409T174503Z)
+  run_name: null              # Auto-generate UTC timestamp name (e.g., run_20260409T174503Z)
 
 # Deep merge these overrides into base_collector_config for training mode
 collector_overrides:
   lidar:
-    enabled: true  # Enable lidar collection in production run
-    env_num_beams: 360  # Simulated lidar beam count
-    clip_min: 0.0  # Minimum clipped lidar range (meters)
-    clip_max: 15.0  # Maximum clipped lidar range (meters) for near-field racing focus
-    store_raw: false  # Keep files manageable at full scale
-    dtype: float16  # Compact lidar storage format
+    enabled: true             # Enable lidar collection in production run
+    env_num_beams: 360        # Simulated lidar beam count
+    clip_min: 0.0             # Minimum clipped lidar range (meters)
+    clip_max: 15.0            # Maximum clipped lidar range (meters) for near-field racing focus
+    store_raw: false          # Keep files manageable at full scale
+    dtype: float16            # Compact lidar storage format
     binning:
-      enabled: true  # Enable downsampling
-      n_bins: 60  # Saved bins per lidar scan
-      method: min  # Min pooling emphasizes nearby obstacles
+      enabled: true           # Enable downsampling
+      n_bins: 60              # Saved bins per lidar scan
+      method: min             # Min pooling emphasizes nearby obstacles
   perturbation:
-    enabled: true  # ENABLE perturbations for training diversity
-    probability: 0.2  # 20% of steps receive steering shove
-    shove_magnitude: 0.3  # Magnitude of steering shove (radians)
+    enabled: true             # ENABLE perturbations for training diversity
+    probability: 0.2          # 20% of steps receive steering shove
+    shove_magnitude: 0.3      # Magnitude of steering shove (radians)
     min_steps_between_shoves: 20  # Cooldown: prevent shoves within 20 steps
   dagger:
-    enabled: true  # ENABLE DAgger dual-action labeling
-    record_noise_vectors: true  # Record noise vectors for recovery supervision
+    enabled: true             # ENABLE DAgger dual-action labeling
+    record_noise_vectors: true # Record noise vectors for recovery supervision

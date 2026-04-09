@@ -28,9 +28,7 @@ Primary configs:
 ### Prerequisites
 
 - **Docker** (recommended) with Docker Compose for isolated environment
-- **Git** for version control and submodule management
 - **4+ GB free disk space** for datasets and build artifacts
-- **Sufficient CPU** (4+ cores recommended for parallel execution)
 
 ### Development Container Setup
 
