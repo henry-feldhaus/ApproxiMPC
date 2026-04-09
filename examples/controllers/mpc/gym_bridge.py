@@ -19,6 +19,33 @@ STMPC_RACE_CONFIG = _CONFIG_DIR / "st_mpc_race_params.yaml"
 STMPC_RECOVER_CONFIG = _CONFIG_DIR / "st_mpc_recover_params.yaml"
 
 
+def _build_curvature_speed_profile(ks: np.ndarray, ref_speed: float, speed_profile: dict | None) -> np.ndarray:
+    """Create waypoint speed profile from curvature limits when enabled."""
+    n = len(ks)
+    if not speed_profile or not bool(speed_profile.get("enabled", False)):
+        return np.full(n, ref_speed, dtype=np.float64)
+
+    a_lat_max = float(speed_profile.get("a_lat_max", 3.5))
+    kappa_epsilon = float(speed_profile.get("kappa_epsilon", 1e-3))
+    min_speed = float(speed_profile.get("min_speed", 1.5))
+    max_speed = float(speed_profile.get("max_speed", ref_speed))
+    smoothing_window = int(speed_profile.get("smoothing_window", 9))
+
+    curvature = np.abs(ks)
+    raw_profile = np.sqrt(np.maximum(a_lat_max, 1e-3) / (curvature + max(kappa_epsilon, 1e-6)))
+    vx_ref = np.clip(raw_profile, min_speed, max_speed)
+
+    if smoothing_window > 1:
+        if smoothing_window % 2 == 0:
+            smoothing_window += 1
+        half = smoothing_window // 2
+        padded = np.concatenate([vx_ref[-half:], vx_ref, vx_ref[:half]])
+        kernel = np.ones(smoothing_window, dtype=np.float64) / smoothing_window
+        vx_ref = np.convolve(padded, kernel, mode="valid")
+
+    return vx_ref.astype(np.float64)
+
+
 class KMPCGymBridge:
     """Bridge between F1TENTH gym environment and the Kinematic MPC controller.
 
@@ -26,7 +53,7 @@ class KMPCGymBridge:
     for coordinate conversion (not the gym's CubicSpline2D).
     """
 
-    def __init__(self, env, ref_speed: float = 6.0):
+    def __init__(self, env, ref_speed: float = 6.0, speed_profile: dict | None = None):
         self.track = env.unwrapped.track
         print(f"[KMPCGymBridge] config={KMPC_CONFIG.name}")
 
@@ -42,7 +69,12 @@ class KMPCGymBridge:
         w_rights = cl.w_rights.astype(np.float64)
 
         n = len(xs)
-        vx_ref = np.full(n, ref_speed, dtype=np.float64)
+        vx_ref = _build_curvature_speed_profile(ks, ref_speed, speed_profile)
+        if speed_profile and bool(speed_profile.get("enabled", False)):
+            print(
+                "[KMPCGymBridge] curvature speed profile enabled: "
+                f"v_min={float(np.min(vx_ref)):.2f}, v_max={float(np.max(vx_ref)):.2f}"
+            )
 
         # Recompute arc-length from (xs, ys) to match FrenetConverter/SplineTrack domains
         s_ref = np.zeros(n, dtype=np.float64)
@@ -113,6 +145,7 @@ class STMPCGymBridge:
         self,
         env,
         ref_speed: float = 4.0,
+        startup_speed_offset: float = 3.0,
     ):
         unwrapped = env.unwrapped
         self.track = unwrapped.track
@@ -163,6 +196,9 @@ class STMPCGymBridge:
         self.controller = Single_track_MPC_Controller(stmpc_config, car_config, tire_config)
         self.controller.mpc_initialize_solver(xs, ys, vx_ref, ks, s_ref, w_lefts, w_rights)
         self.last_compute_time = 0.0
+        self.startup_speed_offset = startup_speed_offset
+        self.last_status = 0
+        self.solver_fail_count = 0
 
     def get_action(self, obs: dict) -> np.ndarray:
         agent_obs = obs["agent_0"]
@@ -189,7 +225,7 @@ class STMPCGymBridge:
         # Open-loop startup
         v_min = self.controller.stmpc_config.v_min
         if vx < v_min:
-            startup_speed = v_min + 3.0
+            startup_speed = v_min + self.startup_speed_offset
             return np.array([[0.0, startup_speed]])
 
         position_in_map = np.array([[pose_x, pose_y, pose_theta]])
@@ -204,6 +240,9 @@ class STMPCGymBridge:
         speed, steering, status = self.controller.main_loop(
             position_in_map, self.waypoint_array, position_in_map_frenet, single_track_state, self.last_compute_time
         )
+        self.last_status = int(status)
+        if status != 0:
+            self.solver_fail_count += 1
 
         return np.array([[steering, speed]])
 

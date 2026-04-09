@@ -37,6 +37,8 @@ class Single_track_MPC_Controller:
         self.comp_time = 0
         self.prev_acc = 0
         self.speed = 0
+        self.last_valid_speed = max(float(self.stmpc_config.v_min), 1.0)
+        self.last_valid_steering = 0.0
 
     def mpc_initialize_solver(
         self,
@@ -215,8 +217,9 @@ class Single_track_MPC_Controller:
         # Solve OCP
         status = self.acados_solver.solve()
         if status != 0:
-            print("STMPC solver failed, applying warm start")
+            print("STMPC solver failed, applying warm start and retry")
             self.apply_warm_start(pose_frenet=[self.fre_s, self.fre_d, self.fre_alpha])
+            status = self.acados_solver.solve()
 
         # get solution
         self.u0 = self.acados_solver.get(0, "u")
@@ -236,9 +239,13 @@ class Single_track_MPC_Controller:
         self.mpc_sd = np.array([self.acados_solver.get(j, "x")[:2] for j in range(self.stmpc_config.N + 1)])
 
         if status == 0:
+            self.last_valid_speed = float(np.clip(self.speed, self.stmpc_config.v_min, self.stmpc_config.v_max))
+            self.last_valid_steering = float(np.clip(self.steering_angle, self.stmpc_config.delta_min, self.stmpc_config.delta_max))
             return self.speed, self.steering_angle, status
         else:
-            return 0, self.measured_steer, status
+            safe_speed = float(np.clip(self.last_valid_speed, self.stmpc_config.v_min, self.stmpc_config.v_max))
+            safe_steer = float(np.clip(self.last_valid_steering, self.stmpc_config.delta_min, self.stmpc_config.delta_max))
+            return safe_speed, safe_steer, status
 
     #############
     # Utilities #

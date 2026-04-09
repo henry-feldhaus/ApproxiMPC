@@ -4,12 +4,21 @@
 run:
   # Number of episodes to collect
   episodes: 10
-  # Maximum steps per episode (actual may be less due to lap termination)
-  steps_per_episode: 2000
+  # Safety timeout in steps (episode should normally end by lap target)
+  steps_per_episode: 6000
   # Whether to render during collection
   render: false
   # Whether to use env.reset() default behavior (false = use bridge start pose)
   use_default_reset: false
+  lap_termination:
+    enabled: true
+    target_laps: 1
+    method: s_wrap
+    wrap_threshold_ratio: 0.2
+    auto_timeout:
+      enabled: true
+      timeout_factor: 2.0
+      min_expected_speed_ratio: 0.5
 
 env:
   # Map name (must exist in maps/)
@@ -18,12 +27,54 @@ env:
   timestep: 0.01
   # Integration method: rk4, euler
   integrator: rk4
-  # Vehicle model: ks (kinematic), std (single-track dynamics)
+  # Legacy field (collector now derives model from controller.mode settings below)
   model: ks
 
 controller:
-  # KMPC reference speed (m/s)
+  # Choose expert controller: kmpc (constant target speed) or stmpc (dynamic speed + steering)
+  mode: kmpc
+  # Shared nominal speed target (m/s)
   ref_speed: 4.0
+  # Parameters used when controller.mode = kmpc
+  kmpc:
+    model: ks
+    observation_type: kinematic_state
+    speed_profile:
+      enabled: true
+      # Limit speed by curvature: v <= sqrt(a_lat_max / (|kappa| + kappa_epsilon))
+      a_lat_max: 3.5
+      min_speed: 1.8
+      max_speed: 4.0
+      kappa_epsilon: 0.001
+      smoothing_window: 11
+  # Parameters used when controller.mode = stmpc
+  stmpc:
+    training_mode: race
+    model: std
+    observation_type: frenet_dynamic_state
+    use_std_vehicle_params: true
+    startup_speed_offset: 1.5
+    reset_with_states: true
+    initial_state:
+      delta: 0.0
+      speed: 3.0
+      yaw_rate: 0.0
+      slip_angle: 0.0
+    runtime_tuning:
+      enabled: true
+      qalpha: 8.0
+      qn: 50.0
+      qv: 15.0
+      qddelta: 1.0
+      qjerk: 0.05
+      track_safety_margin: 0.30
+      v_max: 8.0
+      a_max: 3.0
+      jerk_max: 20.0
+      jerk_min: -20.0
+      ddelta_max: 1.8
+      ddelta_min: -1.8
+      alat_max: 4.5
 
 perturbation:
   # Enable probabilistic perturbation (shove injection)
@@ -33,7 +84,7 @@ perturbation:
   # Magnitude of steering shove (radians)
   shove_magnitude: 0.3
   # Minimum steps between perturbations (0 = no cooldown, random each step)
-  min_steps_between_shoves: 5
+  min_steps_between_shoves: 0
 
 dagger:
   # Enable DAgger-style dual action labeling

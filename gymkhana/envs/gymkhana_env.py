@@ -1250,6 +1250,8 @@ class GKEnv(gym.Env):
             "checkpoint_done": toggle_list,
             "episode_length": self.current_step,
             "lap_counts": self.lap_counts[0],
+            "collision": bool(self.collisions[0]),
+            "boundary_exceeded": bool(self.boundary_exceeded[0]),
         }
 
         # calc reward

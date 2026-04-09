@@ -24,7 +24,7 @@ import gymkhana  # noqa: F401  # ensures gym env registration
 
 # Avoid importing through controllers package __init__, which currently pulls stale RL modules.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples" / "controllers"))
-from mpc.gym_bridge import KMPCGymBridge
+from mpc.gym_bridge import KMPCGymBridge, STMPCGymBridge
 
 FEATURE_NAMES = [
     "pose_x",
@@ -35,6 +35,39 @@ FEATURE_NAMES = [
 ]
 
 ACTION_NAMES = ["steering_angle", "speed"]
+
+
+class LapTracker:
+    """Track lap completion from centerline arclength wrap-around."""
+
+    def __init__(self, track: Any, wrap_threshold_ratio: float = 0.2):
+        self.track = track
+        self.track_length = float(track.centerline.spline.s[-1])
+        self.wrap_threshold_ratio = float(wrap_threshold_ratio)
+        self.prev_s = None
+        self.lap_count = 0
+
+    def reset(self, x: float, y: float) -> None:
+        s, _ = self.track.centerline.spline.calc_arclength_inaccurate(x, y)
+        self.prev_s = float(s) % self.track_length
+        self.lap_count = 0
+
+    def update(self, x: float, y: float) -> tuple[int, bool, float]:
+        if self.prev_s is None:
+            self.reset(x, y)
+            return self.lap_count, False, float(self.prev_s)
+
+        s, _ = self.track.centerline.spline.calc_arclength_inaccurate(x, y)
+        current_s = float(s) % self.track_length
+
+        high = self.track_length * (1.0 - self.wrap_threshold_ratio)
+        low = self.track_length * self.wrap_threshold_ratio
+        wrapped = self.prev_s >= high and current_s <= low
+        if wrapped:
+            self.lap_count += 1
+
+        self.prev_s = current_s
+        return self.lap_count, wrapped, current_s
 
 
 def load_config(config_path: str | Path) -> dict:
@@ -48,22 +81,130 @@ def get_default_config_path() -> Path:
     return Path(__file__).resolve().parent.parent / "configs" / "collect_mpc_default.yaml"
 
 
-def get_kmpc_collect_config(map_name: str, max_episode_steps: int) -> dict:
-    """Build gymnasium environment config for KMPC data collection."""
+def get_lap_termination_config(run_cfg: dict) -> dict:
+    lap_cfg = run_cfg.get("lap_termination", {})
     return {
-        "map": map_name,
+        "enabled": bool(lap_cfg.get("enabled", True)),
+        "target_laps": int(lap_cfg.get("target_laps", 1)),
+        "method": str(lap_cfg.get("method", "s_wrap")),
+        "wrap_threshold_ratio": float(lap_cfg.get("wrap_threshold_ratio", 0.2)),
+        "auto_timeout": {
+            "enabled": bool(lap_cfg.get("auto_timeout", {}).get("enabled", True)),
+            "timeout_factor": float(lap_cfg.get("auto_timeout", {}).get("timeout_factor", 2.0)),
+            "min_expected_speed_ratio": float(
+                lap_cfg.get("auto_timeout", {}).get("min_expected_speed_ratio", 0.5)
+            ),
+        },
+    }
+
+
+def get_controller_config(cfg: dict) -> dict:
+    """Normalize controller configuration from YAML."""
+    ctrl_cfg = cfg.get("controller", {})
+    mode = str(ctrl_cfg.get("mode", "kmpc")).lower().strip()
+    if mode not in {"kmpc", "stmpc"}:
+        raise ValueError(f"Unsupported controller.mode='{mode}'. Use 'kmpc' or 'stmpc'.")
+
+    return {
+        "mode": mode,
+        "ref_speed": float(ctrl_cfg.get("ref_speed", 4.0)),
+        "kmpc": ctrl_cfg.get("kmpc", {}),
+        "stmpc": ctrl_cfg.get("stmpc", {}),
+    }
+
+
+def get_stmpc_reset_config(stmpc_cfg: dict, ref_speed: float) -> dict:
+    """Build STMPC reset configuration."""
+    init_cfg = stmpc_cfg.get("initial_state", {})
+    return {
+        "reset_with_states": bool(stmpc_cfg.get("reset_with_states", True)),
+        "delta": float(init_cfg.get("delta", 0.0)),
+        "speed": float(init_cfg.get("speed", ref_speed)),
+        "yaw_rate": float(init_cfg.get("yaw_rate", 0.0)),
+        "slip_angle": float(init_cfg.get("slip_angle", 0.0)),
+    }
+
+
+def apply_stmpc_runtime_tuning(bridge: STMPCGymBridge, stmpc_cfg: dict) -> list[str]:
+    """Apply optional runtime tuning overrides to STMPC config values."""
+    tuning = stmpc_cfg.get("runtime_tuning", {})
+    if not bool(tuning.get("enabled", False)):
+        return []
+
+    allowed_fields = [
+        "qn",
+        "qalpha",
+        "qv",
+        "qjerk",
+        "qddelta",
+        "a_min",
+        "a_max",
+        "v_min",
+        "v_max",
+        "ddelta_min",
+        "ddelta_max",
+        "jerk_min",
+        "jerk_max",
+        "alat_max",
+        "track_safety_margin",
+    ]
+    applied = []
+    ctrl_cfg = bridge.controller.stmpc_config
+
+    for field in allowed_fields:
+        if field in tuning:
+            old_val = getattr(ctrl_cfg, field)
+            new_val = float(tuning[field])
+            setattr(ctrl_cfg, field, new_val)
+            applied.append(f"{field}:{old_val}->{new_val}")
+    return applied
+
+
+def count_by_value(values: list[str]) -> dict[str, int]:
+    """Return frequency table for string values."""
+    counts = {}
+    for val in values:
+        counts[val] = counts.get(val, 0) + 1
+    return counts
+
+
+def get_collect_env_config(cfg: dict, max_episode_steps: int, controller_cfg: dict) -> dict:
+    """Build gymnasium environment config for MPC data collection."""
+    from gymkhana.envs import GKEnv
+
+    env_cfg = cfg["env"]
+    mode = controller_cfg["mode"]
+
+    if mode == "stmpc":
+        stmpc_cfg = controller_cfg["stmpc"]
+        model = str(stmpc_cfg.get("model", "std"))
+        obs_type = str(stmpc_cfg.get("observation_type", "frenet_dynamic_state"))
+        training_mode = str(stmpc_cfg.get("training_mode", "race"))
+        use_std_params = bool(stmpc_cfg.get("use_std_vehicle_params", True))
+    else:
+        kmpc_cfg = controller_cfg["kmpc"]
+        model = str(kmpc_cfg.get("model", "ks"))
+        obs_type = str(kmpc_cfg.get("observation_type", "kinematic_state"))
+        training_mode = "race"
+        use_std_params = False
+
+    config = {
+        "map": env_cfg["map"],
         "num_agents": 1,
-        "timestep": 0.01,
-        "integrator": "rk4",
-        "model": "ks",
+        "timestep": float(env_cfg["timestep"]),
+        "integrator": str(env_cfg["integrator"]),
+        "model": model,
         "control_input": ["speed", "steering_angle"],
-        "observation_config": {"type": "kinematic_state"},
+        "observation_config": {"type": obs_type},
         "normalize_act": False,
         "normalize_obs": False,
-        "training_mode": "race",
+        "training_mode": training_mode,
         "track_direction": "normal",
         "max_episode_steps": max_episode_steps,
     }
+    if use_std_params:
+        config["params"] = GKEnv.f1tenth_std_vehicle_params()
+    return config
 
 
 def obs_to_vec(obs: dict) -> np.ndarray:
@@ -118,7 +259,7 @@ class PerturbationManager:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Collect KMPC transitions with YAML config, lap termination, and DAgger labeling"
+        description="Collect MPC transitions with YAML config, lap termination, and DAgger labeling"
     )
     parser.add_argument(
         "--config",
@@ -146,6 +287,11 @@ def main() -> None:
         sys.exit(1)
 
     cfg = load_config(config_path)
+    controller_cfg = get_controller_config(cfg)
+    lap_cfg = get_lap_termination_config(cfg["run"])
+    if lap_cfg["method"] != "s_wrap":
+        print(f"WARNING: Unsupported lap_termination.method='{lap_cfg['method']}', using 's_wrap'")
+        lap_cfg["method"] = "s_wrap"
 
     # Override render from CLI if specified
     if args.render:
@@ -153,12 +299,55 @@ def main() -> None:
 
     print(f"Loaded config from: {config_path}")
     print(f"Collection settings: {cfg['run']['episodes']} episodes, {cfg['run']['steps_per_episode']} max steps per")
+    print(
+        f"Controller mode: {controller_cfg['mode']}, ref_speed={controller_cfg['ref_speed']:.2f} m/s"
+    )
+    if lap_cfg["enabled"]:
+        print(
+            "Lap termination: "
+            f"enabled=True, target_laps={lap_cfg['target_laps']}, method={lap_cfg['method']}"
+        )
 
     # Initialize environment
-    env_config = get_kmpc_collect_config(cfg["env"]["map"], cfg["run"]["steps_per_episode"])
+    env_config = get_collect_env_config(cfg, cfg["run"]["steps_per_episode"], controller_cfg)
     render_mode = "human" if cfg["run"]["render"] else None
     env = gym.make("gymkhana:gymkhana-v0", config=env_config, render_mode=render_mode)
-    bridge = KMPCGymBridge(env, ref_speed=cfg["controller"]["ref_speed"])
+    if controller_cfg["mode"] == "stmpc":
+        stmpc_cfg = controller_cfg["stmpc"]
+        startup_speed_offset = float(stmpc_cfg.get("startup_speed_offset", 3.0))
+        bridge = STMPCGymBridge(
+            env,
+            ref_speed=controller_cfg["ref_speed"],
+            startup_speed_offset=startup_speed_offset,
+        )
+        tuning_applied = apply_stmpc_runtime_tuning(bridge, stmpc_cfg)
+        if tuning_applied:
+            print("STMPC runtime tuning overrides: " + ", ".join(tuning_applied))
+        stmpc_reset_cfg = get_stmpc_reset_config(stmpc_cfg, controller_cfg["ref_speed"])
+    else:
+        speed_profile_cfg = controller_cfg["kmpc"].get("speed_profile", {})
+        bridge = KMPCGymBridge(
+            env,
+            ref_speed=controller_cfg["ref_speed"],
+            speed_profile=speed_profile_cfg,
+        )
+        stmpc_reset_cfg = None
+
+    effective_steps_per_episode = int(cfg["run"]["steps_per_episode"])
+    if lap_cfg["enabled"] and lap_cfg["auto_timeout"]["enabled"]:
+        track_length = float(env.unwrapped.track.centerline.spline.s[-1])
+        timestep = float(env_config["timestep"])
+        ref_speed = float(controller_cfg["ref_speed"])
+        min_speed_ratio = max(0.05, lap_cfg["auto_timeout"]["min_expected_speed_ratio"])
+        expected_progress_per_step = max(ref_speed * timestep * min_speed_ratio, 1e-4)
+        base_steps = (lap_cfg["target_laps"] * track_length) / expected_progress_per_step
+        dynamic_timeout = int(np.ceil(base_steps * lap_cfg["auto_timeout"]["timeout_factor"]))
+        effective_steps_per_episode = max(effective_steps_per_episode, dynamic_timeout)
+        env.unwrapped.max_episode_steps = effective_steps_per_episode
+        print(
+            "Lap timeout auto-sizing: "
+            f"track_length={track_length:.2f}, timeout_steps={effective_steps_per_episode}"
+        )
 
     # Initialize perturbation manager if enabled
     perturbation_mgr = None
@@ -181,6 +370,12 @@ def main() -> None:
     episode_ids = []
     step_ids = []
     is_perturbed_steps = []
+    collector_lap_counts = []
+    env_lap_counts = []
+    episode_end_reasons = []
+    collision_flags = []
+    boundary_flags = []
+    stmpc_status_codes = [] if controller_cfg["mode"] == "stmpc" else None
     noise_vectors = [] if cfg["perturbation"]["enabled"] and cfg["dagger"]["record_noise_vectors"] else None
 
     try:
@@ -191,12 +386,40 @@ def main() -> None:
                 obs, _ = env.reset()
             else:
                 x0, y0, yaw0 = bridge.get_start_pose()
-                obs, _ = env.reset(options={"poses": np.array([[x0, y0, yaw0]])})
+                if controller_cfg["mode"] == "stmpc" and stmpc_reset_cfg and stmpc_reset_cfg["reset_with_states"]:
+                    init_states = np.array(
+                        [
+                            [
+                                x0,
+                                y0,
+                                stmpc_reset_cfg["delta"],
+                                stmpc_reset_cfg["speed"],
+                                yaw0,
+                                stmpc_reset_cfg["yaw_rate"],
+                                stmpc_reset_cfg["slip_angle"],
+                            ]
+                        ],
+                        dtype=np.float64,
+                    )
+                    obs, _ = env.reset(options={"states": init_states})
+                else:
+                    obs, _ = env.reset(options={"poses": np.array([[x0, y0, yaw0]])})
+
+            if hasattr(bridge, "init_from_obs"):
+                bridge.init_from_obs(obs)
 
             ep_reward = 0.0
             ep_step = 0
-
-            for step_idx in range(cfg["run"]["steps_per_episode"]):
+            end_reason = "unknown"
+            lap_tracker = LapTracker(env.unwrapped.track, wrap_threshold_ratio=lap_cfg["wrap_threshold_ratio"])
+            lap_tracker.reset(float(obs["agent_0"]["pose_x"]), float(obs["agent_0"]["pose_y"]))
+            collector_laps = 0
+            last_env_laps = 0
+            last_collision = False
+            last_boundary = False
+            terminated = False
+            truncated = False
+            for step_idx in range(effective_steps_per_episode):
                 obs_vec = obs_to_vec(obs)
                 expert_action = bridge.get_action(obs)
                 expert_action_vec = expert_action[0].astype(np.float32, copy=False)
@@ -215,6 +438,13 @@ def main() -> None:
                     np.array([executed_action_vec])
                 )
                 next_obs_vec = obs_to_vec(next_obs)
+                collector_laps, wrapped, _ = lap_tracker.update(
+                    float(next_obs["agent_0"]["pose_x"]),
+                    float(next_obs["agent_0"]["pose_y"]),
+                )
+                last_env_laps = int(float(info.get("lap_counts", 0)))
+                last_collision = bool(info.get("collision", False))
+                last_boundary = bool(info.get("boundary_exceeded", False))
 
                 if cfg["run"]["render"]:
                     env.render()
@@ -228,8 +458,14 @@ def main() -> None:
                 terminations.append(bool(terminated))
                 truncations.append(bool(truncated))
                 is_perturbed_steps.append(bool(is_perturbed))
+                collector_lap_counts.append(collector_laps)
+                env_lap_counts.append(last_env_laps)
+                collision_flags.append(last_collision)
+                boundary_flags.append(last_boundary)
                 episode_ids.append(ep_idx)
                 step_ids.append(step_idx)
+                if stmpc_status_codes is not None:
+                    stmpc_status_codes.append(int(getattr(bridge, "last_status", 0)))
 
                 if noise_vectors is not None:
                     noise_vectors.append(noise)
@@ -239,20 +475,36 @@ def main() -> None:
                 ep_step = step_idx + 1
                 global_step += 1
 
-                # Check lap-based termination
-                current_laps = info.get("lap_counts", 0)
-                target_laps = 1  # Collect one lap per episode
-                if current_laps >= target_laps:
-                    print(f"  Episode {ep_idx + 1}: Lap {current_laps} completed, terminating")
+                if lap_cfg["enabled"] and collector_laps >= lap_cfg["target_laps"]:
+                    end_reason = "lap_target_reached"
+                    print(
+                        f"  Episode {ep_idx + 1}: collector_laps={collector_laps} reached target "
+                        f"{lap_cfg['target_laps']}, terminating"
+                    )
                     break
 
                 if terminated or truncated:
+                    if terminated:
+                        if last_boundary:
+                            end_reason = "boundary_terminated"
+                        elif last_collision:
+                            end_reason = "collision_terminated"
+                        else:
+                            end_reason = "env_terminated"
+                    elif truncated:
+                        end_reason = "env_truncated"
                     break
+
+            if end_reason == "unknown":
+                end_reason = "step_limit_reached"
+            episode_end_reasons.append(end_reason)
 
             print(
                 f"Episode {ep_idx + 1}/{cfg['run']['episodes']}: "
-                f"steps={ep_step}, laps={info.get('lap_counts', 0)}, "
-                f"reward={ep_reward:.2f}, terminated={terminated}, truncated={truncated}"
+                f"steps={ep_step}, collector_laps={collector_laps}, env_laps={last_env_laps}, "
+                f"reward={ep_reward:.2f}, terminated={terminated}, truncated={truncated}, "
+                f"collision={last_collision}, boundary={last_boundary}, "
+                f"end_reason={end_reason}"
             )
 
     finally:
@@ -266,7 +518,7 @@ def main() -> None:
         out_path = output_dir / cfg["output"]["output_filename"]
     else:
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        out_path = output_dir / f"kmpc_{cfg['env']['map']}_{ts}.npz"
+        out_path = output_dir / f"{controller_cfg['mode']}_{cfg['env']['map']}_{ts}.npz"
 
     # Stack arrays
     obs_arr = np.stack(observations).astype(np.float32)
@@ -279,6 +531,10 @@ def main() -> None:
     ep_arr = np.asarray(episode_ids, dtype=np.int32)
     step_arr = np.asarray(step_ids, dtype=np.int32)
     perturbed_arr = np.asarray(is_perturbed_steps, dtype=np.bool_)
+    collector_laps_arr = np.asarray(collector_lap_counts, dtype=np.int32)
+    env_laps_arr = np.asarray(env_lap_counts, dtype=np.int32)
+    collision_arr = np.asarray(collision_flags, dtype=np.bool_)
+    boundary_arr = np.asarray(boundary_flags, dtype=np.bool_)
 
     # Build save dict
     save_dict = {
@@ -290,11 +546,18 @@ def main() -> None:
         "terminations": term_arr,
         "truncations": trunc_arr,
         "is_perturbed": perturbed_arr,
+        "collector_lap_counts": collector_laps_arr,
+        "env_lap_counts": env_laps_arr,
+        "collision_flags": collision_arr,
+        "boundary_flags": boundary_arr,
         "episode_ids": ep_arr,
         "step_ids": step_arr,
         "feature_names": np.asarray(FEATURE_NAMES),
         "action_names": np.asarray(ACTION_NAMES),
     }
+
+    if stmpc_status_codes is not None:
+        save_dict["stmpc_status_codes"] = np.asarray(stmpc_status_codes, dtype=np.int32)
 
     if noise_vectors is not None and cfg["perturbation"]["enabled"]:
         noise_arr = np.stack(noise_vectors).astype(np.float32)
@@ -307,21 +570,37 @@ def main() -> None:
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "config_file": str(config_path),
         "map": cfg["env"]["map"],
-        "vehicle_model": cfg["env"]["model"],
+        "vehicle_model": env_config["model"],
         "episodes_requested": cfg["run"]["episodes"],
         "steps_per_episode": cfg["run"]["steps_per_episode"],
-        "ref_speed": cfg["controller"]["ref_speed"],
+        "effective_steps_per_episode": effective_steps_per_episode,
+        "lap_termination": lap_cfg,
+        "controller_mode": controller_cfg["mode"],
+        "ref_speed": controller_cfg["ref_speed"],
+        "controller_config": {
+            "kmpc": controller_cfg["kmpc"],
+            "stmpc": controller_cfg["stmpc"],
+        },
+        "stmpc_reset_config": stmpc_reset_cfg,
         "perturbation_enabled": cfg["perturbation"]["enabled"],
         "perturbation_probability": cfg["perturbation"]["probability"] if cfg["perturbation"]["enabled"] else None,
         "dagger_enabled": cfg["dagger"]["enabled"],
         "num_transitions": int(obs_arr.shape[0]),
         "num_perturbed_steps": int(np.sum(perturbed_arr)),
+        "num_collision_steps": int(np.sum(collision_arr)),
+        "num_boundary_steps": int(np.sum(boundary_arr)),
+        "episode_end_reasons": episode_end_reasons,
+        "episode_end_reason_counts": count_by_value(episode_end_reasons),
         "obs_shape": list(obs_arr.shape),
         "expert_act_shape": list(expert_act_arr.shape),
         "executed_act_shape": list(executed_act_arr.shape),
         "feature_names": FEATURE_NAMES,
         "action_names": ACTION_NAMES,
     }
+
+    if stmpc_status_codes is not None:
+        status_arr = np.asarray(stmpc_status_codes, dtype=np.int32)
+        metadata["stmpc_solver_fail_steps"] = int(np.sum(status_arr != 0))
 
     meta_path = out_path.with_suffix(".json")
     meta_path.write_text(json.dumps(metadata, indent=2))
@@ -332,10 +611,6 @@ def main() -> None:
         f"Total transitions: {obs_arr.shape[0]} "
         f"({int(np.sum(perturbed_arr))} perturbed, {int(np.sum(~perturbed_arr))} clean)"
     )
-
-
-if __name__ == "__main__":
-    main()
 
 
 if __name__ == "__main__":
