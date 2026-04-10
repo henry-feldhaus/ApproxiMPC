@@ -10,6 +10,8 @@ flycheck_*
 __pycache__/
 *.py[cod]
 *$py.class
+datasets/
+mpc_datasets/
 
 # C extensions
 *.so
