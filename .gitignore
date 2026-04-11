@@ -13,6 +13,7 @@ __pycache__/
 datasets/
 mpc_datasets/
 viz/
+models/
 
 # C extensions
 *.so
