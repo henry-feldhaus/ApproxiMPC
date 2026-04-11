@@ -12,6 +12,7 @@ __pycache__/
 *$py.class
 datasets/
 mpc_datasets/
+viz/
 
 # C extensions
 *.so
