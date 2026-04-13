@@ -10,7 +10,7 @@ flycheck_*
 __pycache__/
 *.py[cod]
 *$py.class
-datasets/
+pkl_datasets/
 mpc_datasets/
 viz/
 models/
