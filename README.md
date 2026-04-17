@@ -250,66 +250,81 @@ In multi-map configs:
 
 ### Exporting an LSTM Model to ONNX
 
-Use the script under `LSTM_training/scripts` to export a trained checkpoint into a `.onnx` file:
+To use an exported ONNX LSTM model for inference:
 
-```bash
-cd /app
-PYTHONPATH=/app python LSTM_training/scripts/pytorch_to_onnx_converter.py
-```
+1. Export your model and scalers as above.
+2. Use the following Python code to run inference:
 
-By default this reads the model bundle in `LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1/` and writes `LSTM_1B_128D.onnx` next to the checkpoint.
+```python
+import onnxruntime as ort
+import numpy as np
+import joblib
 
-Optional flags:
-- `--config`: path to the model config JSON.
-- `--output`: where to write the ONNX file.
-- `--opset`: ONNX opset version to export.
+### Exporting and Using LSTM ONNX Models
 
-The exporter only writes the ONNX file. It does not start the simulator or run inference.
+#### 1. Exporting a Trained LSTM Model to ONNX
 
-## LSTM Training and ONNX Export
+Use the ONNX exporter script to convert a trained LSTM model and its scalers to ONNX format:
 
-### Exporting a Trained LSTM Model to ONNX
-
-To export a trained LSTM checkpoint to ONNX format for F1Tenth simulation, you can use either the config/output method or the new convenient `--model_dir` option:
-
-**Option 1: Using --model_dir (recommended)**
-
+**Recommended:**
 ```bash
 python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
 ```
+This will automatically find the config and export the ONNX and scaler files to `LSTM_training/models/4-16-25 Models/onnx_models/`.
 
-This will automatically find the config and export the ONNX and scaler files to your current directory.
-
-**Option 2: Manual config/output**
-
+**Manual:**
 ```bash
 python LSTM_training/scripts/pytorch_to_onnx_converter.py \
   --config LSTM_training/models/4-16-25\ Models/LSTM_1B_128D_Pred_1/LSTM_1B_128D_config.json \
-  --output LSTM_1B_128D.onnx
+  --output LSTM_training/models/4-16-25\ Models/onnx_models/LSTM_1B_128D.onnx
 ```
 
-- `--config`: Path to the model config JSON (references all artifact files)
-- `--output`: Path for the ONNX file to write
-- `--opset`: (Optional) ONNX opset version (default: 17)
-- `--device`: (Optional) Device to use (default: cpu)
+**What gets exported:**
+- `<model_name>.onnx` — The ONNX model file
+- `<model_name>_input_scaler.pkl` — Input scaler (joblib)
+- `<model_name>_target_scaler.pkl` — Output scaler (joblib)
 
-**Note:** The script will also export the input/output scalers as `<model_name>_input_scaler.pkl` and `<model_name>_target_scaler.pkl` alongside the ONNX file.
+**Note:** For small models, only a `.onnx` file is created. For very large models (>2GB), a `.onnx.data` file may also be created. Both must be kept together for inference if present.
+
+#### 2. Inference with Exported ONNX Model
+
+To use an exported ONNX LSTM model for inference:
+
+```python
+import onnxruntime as ort
+import numpy as np
+import joblib
+
+# Paths to exported artifacts
+onnx_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D.onnx"
+input_scaler_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D_input_scaler.pkl"
+target_scaler_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D_target_scaler.pkl"
+
+# Load scalers
+input_scaler = joblib.load(input_scaler_path)
+target_scaler = joblib.load(target_scaler_path)
+
+# Example input (batch_size=1, seq_len=10, input_dim=63)
+raw_input = np.random.rand(1, 10, 63).astype(np.float32)
+
+# Preprocess input
+scaled_input = input_scaler.transform(raw_input.reshape(-1, raw_input.shape[-1])).reshape(raw_input.shape)
+
+# Run ONNX inference
+sess = ort.InferenceSession(onnx_path)
+output = sess.run(None, {"input": scaled_input})[0]
+
+# Postprocess output
+pred = target_scaler.inverse_transform(output)
+print("Predicted action(s):", pred)
+```
+
+**Important:**
+- Always use the exported input/output scalers for normalization.
+- If a `.onnx.data` file is present, keep it in the same directory as the `.onnx` file.
+- For most models, only the `.onnx` file is needed.
 
 ---
-
-## Baseline Validation
-
-Use this to verify the main MPC path remains healthy after code changes:
-
-```bash
-docker compose run --rm app bash -c 'cd /app && PYTHONPATH=/app python - <<"PY"
-import gymnasium as gym
-import numpy as np
-import gymkhana
-from mpc.gym_bridge import KMPCGymBridge
-
-config = {
-    "map": "Spielberg",
     "num_agents": 1,
     "timestep": 0.01,
     "integrator": "rk4",

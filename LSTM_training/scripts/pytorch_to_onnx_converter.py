@@ -14,6 +14,7 @@ def export_to_onnx(config_path, output_path, opset=17, device="cpu"):
     model.eval()
 
     # Save the scalers for use in simulation
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     base = os.path.splitext(output_path)[0]
     joblib.dump(input_scaler, base + "_input_scaler.pkl")
     joblib.dump(target_scaler, base + "_target_scaler.pkl")
@@ -23,7 +24,7 @@ def export_to_onnx(config_path, output_path, opset=17, device="cpu"):
     input_dim = cfg["model_config"].get("input_dim", 63)
     dummy_input = torch.zeros(1, seq_len, input_dim, dtype=torch.float32)
 
-    # Export to ONNX
+    # Export to ONNX (only batch_size is dynamic, seq_len is fixed)
     torch.onnx.export(
         model,
         dummy_input,
@@ -32,7 +33,8 @@ def export_to_onnx(config_path, output_path, opset=17, device="cpu"):
         opset_version=opset,
         input_names=["input"],
         output_names=["output"],
-        dynamic_axes={"input": {0: "batch_size", 1: "seq_len"}, "output": {0: "batch_size"}},
+        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+        use_external_data_format=False,
     )
     print(f"Exported ONNX model to {output_path}")
     print(f"Saved input scaler to {base}_input_scaler.pkl")
@@ -40,8 +42,8 @@ def export_to_onnx(config_path, output_path, opset=17, device="cpu"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export LSTM model to ONNX with scalers.")
-    parser.add_argument("--config", type=str, required=True, help="Path to model config JSON.")
-    parser.add_argument("--output", type=str, required=True, help="Output ONNX file path.")
+    parser.add_argument("--config", type=str, required=False, help="Path to model config JSON.")
+    parser.add_argument("--output", type=str, required=False, help="Output ONNX file path.")
     parser.add_argument("--opset", type=int, default=17, help="ONNX opset version.")
     parser.add_argument("--device", type=str, default="cpu", help="Device to use (cpu/cuda).")
     parser.add_argument(
@@ -53,15 +55,25 @@ if __name__ == "__main__":
 
     # If model_dir is provided, auto-populate config/output
     if args.model_dir:
-        # Find config and model name
-        files = os.listdir(args.model_dir)
-        config_file = next((f for f in files if f.endswith('_config.json')), None)
-        if not config_file:
-            raise FileNotFoundError("No *_config.json found in model_dir")
-        model_name = config_file.replace('_config.json', '')
-        config_path = os.path.join(args.model_dir, config_file)
-        output_path = os.path.join(os.getcwd(), f"{model_name}.onnx")
+        # Recursively search for *_config.json in model_dir and subdirs
+        config_path = None
+        model_name = None
+        for root, dirs, files in os.walk(args.model_dir):
+            for f in files:
+                if f.endswith('_config.json'):
+                    config_path = os.path.join(root, f)
+                    model_name = f.replace('_config.json', '')
+                    break
+            if config_path:
+                break
+        if not config_path:
+            raise FileNotFoundError(f"No *_config.json found in model_dir or its subdirectories: {args.model_dir}")
+        onnx_dir = os.path.join(os.path.dirname(args.model_dir), "onnx_models")
+        os.makedirs(onnx_dir, exist_ok=True)
+        output_path = os.path.join(onnx_dir, f"{model_name}.onnx")
     else:
+        if not args.config or not args.output:
+            parser.error("--config and --output are required if --model_dir is not provided.")
         config_path = args.config
         output_path = args.output
 
