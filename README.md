@@ -273,13 +273,13 @@ Before you can use an ONNX model for inference, you must export it from a traine
 ```bash
 PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
 ```
-This will automatically find the config and export the ONNX and scaler files to `LSTM_training/models/4-16-25 Models/onnx_models/`.
+This will automatically find the config and export the ONNX and scaler files to `LSTM_training/models/4-16-25 Models/onnx_models/<model_name>/`.
 
 **Manual:**
 ```bash
 PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py \
   --config LSTM_training/models/4-16-25\ Models/LSTM_1B_128D_Pred_1/LSTM_1B_128D_config.json \
-  --output LSTM_training/models/4-16-25\ Models/onnx_models/LSTM_1B_128D.onnx
+  --output LSTM_training/models/4-16-25\ Models/onnx_models/LSTM_1B_128D/LSTM_1B_128D.onnx
 ```
 
 **What gets exported:**
@@ -299,10 +299,10 @@ import onnxruntime as ort
 import numpy as np
 import joblib
 
-# Paths to exported artifacts
-onnx_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D.onnx"
-input_scaler_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D_input_scaler.pkl"
-target_scaler_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D_target_scaler.pkl"
+# Paths to exported artifacts (per-model subdirectory)
+onnx_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D/LSTM_1B_128D.onnx"
+input_scaler_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D/LSTM_1B_128D_input_scaler.pkl"
+target_scaler_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D/LSTM_1B_128D_target_scaler.pkl"
 
 # Load scalers
 input_scaler = joblib.load(input_scaler_path)
@@ -323,10 +323,50 @@ pred = target_scaler.inverse_transform(output)
 print("Predicted action(s):", pred)
 ```
 
+### Additional ONNX Export Notes
+
+- **Per-model output layout:** exports are placed under `LSTM_training/models/.../onnx_models/<model_name>/` containing:
+  - `<model_name>.onnx`
+  - `<model_name>_input_scaler.pkl`
+  - `<model_name>_target_scaler.pkl`
+
+- **PYTHONPATH requirement:** Run the exporter with `PYTHONPATH=$(pwd)` so the `LSTM_training` package can be imported. Example (single model):
+```bash
+PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
+```
+
+- **ONNX external-data (`*.onnx.data*`) files:** Depending on your PyTorch/ONNX toolchain, the exporter may write external-data shards for large tensors. The exporter script implements two mitigations:
+  - attempt `use_external_data_format=False` during `torch.onnx.export` when supported by your torch version,
+  - post-process the exported file by loading with `onnx.load(..., load_external_data=True)` and re-saving with `onnx.save_model(...)` to re-embed external weights into a single `.onnx` file, then remove any `.onnx.data*` shards.
+
+- **Manual re-embedding (if needed):** If you already have an `.onnx` plus `.onnx.data*` files and want a single file, run:
+```bash
+python - <<'PY'
+import onnx
+m = onnx.load('path/to/model.onnx', load_external_data=True)
+onnx.save_model(m, 'path/to/model_reembedded.onnx')
+PY
+```
+
+- **Exporter behavior:** To avoid tracing errors with torch/dynamo, the exporter fixes `seq_len` (only the batch dimension is dynamic). If you require variable sequence length in ONNX, update and test the exporter carefully — some torch/dynamo combinations require `dynamic_shapes` instead of `dynamic_axes`.
+
+- **Recap commands:**
+```bash
+# Single model
+PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
+
+# Batch (skip onnx_models dir)
+for d in LSTM_training/models/4-16-25\ Models/*; do
+  if [ -d "$d" ] && [ "$(basename "$d")" != "onnx_models" ]; then
+    PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "$d"
+  fi
+done
+```
+
 **Important:**
-- Always use the exported input/output scalers for normalization.
-- If a `.onnx.data` file is present, keep it in the same directory as the `.onnx` file.
-- For most models, only the `.onnx` file is needed.
+ - Always use the exported input/output scalers for normalization.
+ - If a `.onnx.data` file is present, keep it in the same directory as the `.onnx` file.
+ - For most models, only the `.onnx` file is needed.
     "num_agents": 1,
     "timestep": 0.01,
     "integrator": "rk4",

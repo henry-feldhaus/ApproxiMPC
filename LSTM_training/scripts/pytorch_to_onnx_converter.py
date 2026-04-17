@@ -14,7 +14,8 @@ def export_to_onnx(config_path, output_path, opset=17, device="cpu"):
     model.eval()
 
     # Save the scalers for use in simulation
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    output_dir = os.path.dirname(output_path) or "."
+    os.makedirs(output_dir, exist_ok=True)
     base = os.path.splitext(output_path)[0]
     joblib.dump(input_scaler, base + "_input_scaler.pkl")
     joblib.dump(target_scaler, base + "_target_scaler.pkl")
@@ -25,17 +26,43 @@ def export_to_onnx(config_path, output_path, opset=17, device="cpu"):
     dummy_input = torch.zeros(1, seq_len, input_dim, dtype=torch.float32)
 
     # Export to ONNX (only batch_size is dynamic, seq_len is fixed)
-    torch.onnx.export(
-        model,
-        dummy_input,
-        output_path,
+    export_kwargs = dict(
+        model=model,
+        args=(dummy_input,),
+        f=output_path,
         export_params=True,
         opset_version=opset,
         input_names=["input"],
         output_names=["output"],
         dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
-        use_external_data_format=False,
     )
+
+    # Some torch versions accept `use_external_data_format`; others do not.
+    # Try with it first, then fall back to calling without it.
+    try:
+        torch.onnx.export(**{**export_kwargs, "use_external_data_format": False})
+    except TypeError:
+        # older torch versions may raise TypeError for unknown kwargs
+        torch.onnx.export(**export_kwargs)
+
+    # Post-process: attempt to re-embed any external data into the single .onnx file
+    try:
+        import onnx
+        import glob
+
+        # Load model including external data, then save back to single-file .onnx
+        mdl = onnx.load_model(output_path, load_external_data=True)
+        onnx.save_model(mdl, output_path)
+
+        # Remove any external data shards created by the exporter
+        for shard in glob.glob(output_path + ".data*"):
+            try:
+                os.remove(shard)
+            except OSError:
+                pass
+    except Exception as e:
+        print(f"Warning: could not re-embed external data for {output_path}: {e}")
+
     print(f"Exported ONNX model to {output_path}")
     print(f"Saved input scaler to {base}_input_scaler.pkl")
     print(f"Saved target scaler to {base}_target_scaler.pkl")
@@ -70,7 +97,10 @@ if __name__ == "__main__":
             raise FileNotFoundError(f"No *_config.json found in model_dir or its subdirectories: {args.model_dir}")
         onnx_dir = os.path.join(os.path.dirname(args.model_dir), "onnx_models")
         os.makedirs(onnx_dir, exist_ok=True)
-        output_path = os.path.join(onnx_dir, f"{model_name}.onnx")
+        # Create a subdirectory per model to keep artifacts organized
+        output_dir = os.path.join(onnx_dir, model_name)
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f"{model_name}.onnx")
     else:
         if not args.config or not args.output:
             parser.error("--config and --output are required if --model_dir is not provided.")
