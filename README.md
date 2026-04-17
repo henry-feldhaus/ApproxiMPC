@@ -17,6 +17,7 @@ Primary entrypoints:
 - `src/stmpc_race.py`: visual single-track MPC run.
 - `src/collect_mpc_data.py`: single-map data collection.
 - `src/collect_mpc_multimap.py`: multi-map orchestration.
+- `LSTM_training/scripts/pytorch_to_onnx_converter.py`: export a trained LSTM checkpoint to ONNX.
 
 Primary configs:
 - `configs/collect_mpc_default.yaml`: default single-run collector config.
@@ -246,6 +247,55 @@ In multi-map configs:
 - `run.maps` and `run.directions` define the sweep order
 - `episodes_per_combo` controls run count per map/direction
 - `collector_overrides` applies deep overrides onto the base collector config
+
+### Exporting an LSTM Model to ONNX
+
+Use the script under `LSTM_training/scripts` to export a trained checkpoint into a `.onnx` file:
+
+```bash
+cd /app
+PYTHONPATH=/app python LSTM_training/scripts/pytorch_to_onnx_converter.py
+```
+
+By default this reads the model bundle in `LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1/` and writes `LSTM_1B_128D.onnx` next to the checkpoint.
+
+Optional flags:
+- `--config`: path to the model config JSON.
+- `--output`: where to write the ONNX file.
+- `--opset`: ONNX opset version to export.
+
+The exporter only writes the ONNX file. It does not start the simulator or run inference.
+
+## LSTM Training and ONNX Export
+
+### Exporting a Trained LSTM Model to ONNX
+
+To export a trained LSTM checkpoint to ONNX format for F1Tenth simulation, you can use either the config/output method or the new convenient `--model_dir` option:
+
+**Option 1: Using --model_dir (recommended)**
+
+```bash
+python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
+```
+
+This will automatically find the config and export the ONNX and scaler files to your current directory.
+
+**Option 2: Manual config/output**
+
+```bash
+python LSTM_training/scripts/pytorch_to_onnx_converter.py \
+  --config LSTM_training/models/4-16-25\ Models/LSTM_1B_128D_Pred_1/LSTM_1B_128D_config.json \
+  --output LSTM_1B_128D.onnx
+```
+
+- `--config`: Path to the model config JSON (references all artifact files)
+- `--output`: Path for the ONNX file to write
+- `--opset`: (Optional) ONNX opset version (default: 17)
+- `--device`: (Optional) Device to use (default: cpu)
+
+**Note:** The script will also export the input/output scalers as `<model_name>_input_scaler.pkl` and `<model_name>_target_scaler.pkl` alongside the ONNX file.
+
+---
 
 ## Baseline Validation
 
