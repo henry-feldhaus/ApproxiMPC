@@ -249,14 +249,15 @@ In multi-map configs:
 - `collector_overrides` applies deep overrides onto the base collector config
 
 ## Exporting and Using LSTM ONNX Models
+
 ### Batch Export: Export All Models in a Directory
 
-To export ONNX models for all subdirectories (each containing a model) in a parent directory:
+To export ONNX models for all subdirectories (each containing a model) in a parent directory, you must set PYTHONPATH so the script can find the LSTM_training module:
 
 ```bash
 for d in LSTM_training/models/4-16-25\ Models/*; do 
   if [ -d "$d" ] && [ "$(basename "$d")" != "onnx_models" ]; then
-    python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "$d"
+    PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "$d"
   fi
 done
 ```
@@ -267,15 +268,16 @@ This will export ONNX models and scalers for every model directory found under `
 
 Before you can use an ONNX model for inference, you must export it from a trained LSTM checkpoint. Use the exporter script as follows:
 
+
 **Recommended:**
 ```bash
-python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
+PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
 ```
 This will automatically find the config and export the ONNX and scaler files to `LSTM_training/models/4-16-25 Models/onnx_models/`.
 
 **Manual:**
 ```bash
-python LSTM_training/scripts/pytorch_to_onnx_converter.py \
+PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py \
   --config LSTM_training/models/4-16-25\ Models/LSTM_1B_128D_Pred_1/LSTM_1B_128D_config.json \
   --output LSTM_training/models/4-16-25\ Models/onnx_models/LSTM_1B_128D.onnx
 ```
@@ -289,7 +291,8 @@ python LSTM_training/scripts/pytorch_to_onnx_converter.py \
 
 ### 2. Inference with Exported ONNX Model
 
-After exporting, you can use the ONNX model and scalers for inference:
+
+After exporting, you can use the ONNX model and scalers for inference (no PYTHONPATH needed for inference):
 
 ```python
 import onnxruntime as ort
