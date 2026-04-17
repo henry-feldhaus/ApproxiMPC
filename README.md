@@ -248,23 +248,24 @@ In multi-map configs:
 - `episodes_per_combo` controls run count per map/direction
 - `collector_overrides` applies deep overrides onto the base collector config
 
-### Exporting an LSTM Model to ONNX
+## Exporting and Using LSTM ONNX Models
+### Batch Export: Export All Models in a Directory
 
-To use an exported ONNX LSTM model for inference:
+To export ONNX models for all subdirectories (each containing a model) in a parent directory:
 
-1. Export your model and scalers as above.
-2. Use the following Python code to run inference:
+```bash
+for d in LSTM_training/models/4-16-25\ Models/*; do 
+  if [ -d "$d" ] && [ "$(basename "$d")" != "onnx_models" ]; then
+    python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "$d"
+  fi
+done
+```
 
-```python
-import onnxruntime as ort
-import numpy as np
-import joblib
+This will export ONNX models and scalers for every model directory found under `LSTM_training/models/4-16-25 Models/`, skipping the `onnx_models` folder.
 
-### Exporting and Using LSTM ONNX Models
+### 1. Exporting a Trained LSTM Model to ONNX
 
-#### 1. Exporting a Trained LSTM Model to ONNX
-
-Use the ONNX exporter script to convert a trained LSTM model and its scalers to ONNX format:
+Before you can use an ONNX model for inference, you must export it from a trained LSTM checkpoint. Use the exporter script as follows:
 
 **Recommended:**
 ```bash
@@ -286,9 +287,9 @@ python LSTM_training/scripts/pytorch_to_onnx_converter.py \
 
 **Note:** For small models, only a `.onnx` file is created. For very large models (>2GB), a `.onnx.data` file may also be created. Both must be kept together for inference if present.
 
-#### 2. Inference with Exported ONNX Model
+### 2. Inference with Exported ONNX Model
 
-To use an exported ONNX LSTM model for inference:
+After exporting, you can use the ONNX model and scalers for inference:
 
 ```python
 import onnxruntime as ort
@@ -323,8 +324,6 @@ print("Predicted action(s):", pred)
 - Always use the exported input/output scalers for normalization.
 - If a `.onnx.data` file is present, keep it in the same directory as the `.onnx` file.
 - For most models, only the `.onnx` file is needed.
-
----
     "num_agents": 1,
     "timestep": 0.01,
     "integrator": "rk4",
