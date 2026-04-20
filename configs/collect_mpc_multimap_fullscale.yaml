@@ -5,17 +5,35 @@ base_collector_config: configs/collect_mpc_default.yaml  # Base config to extend
 
 run:
   maps:  # Maps to collect from (order matters for alternating directions)
+    - Austin
+    - BrandsHatch
     - Spielberg
     - Budapest
+    - Catalunya
+    - Drift2
+    - Drift2_mirror
+    - Hockenheim
+    - IMS
+    - MexicoCity
     - Monza
+    - MoscowRaceway
+    - Nuerburgring
+    - Oschersleben
+    - Sakhir
+    - SaoPaulo
+    - Sepang
+    - Shanghai
+    - Sochi
     - Spa
     - Silverstone
     - Melbourne
     - Montreal
+    - YasMarina
+    - Zandvoort
   directions:  # Directions to sweep (order alternates per map)
     - normal
     - reverse
-  episodes_per_combo: 10      # Episodes per (map, direction) combination
+  episodes_per_combo: 15      # Episodes per (map, direction) combination
   render: false               # Disable rendering for unattended batch runs
   stop_on_error: false        # Continue on failure (skip failed combo, continue to next)
 
@@ -42,9 +60,11 @@ collector_overrides:
       method: min             # Min pooling emphasizes nearby obstacles
   perturbation:
     enabled: true             # ENABLE perturbations for training diversity
-    probability: 0.2          # 20% of steps receive steering shove
-    shove_magnitude: 0.45     # Magnitude of steering shove (radians) - increased for stronger recovery examples
-    min_steps_between_shoves: 15  # Cooldown: prevent shoves within 15 steps (tighter recovery window)
+    probability: 0.25         # Stable qualitative setting
+    shove_magnitude: 0.2      # Stable qualitative setting
+    min_steps_between_shoves: 500  # Stable qualitative setting
+    hold_steps_min: 10        # Persistent disturbance duration lower bound (steps)
+    hold_steps_max: 30        # Persistent disturbance duration upper bound (steps)
   dagger:
     enabled: true             # ENABLE DAgger dual-action labeling
     record_noise_vectors: true # Record noise vectors for recovery supervision

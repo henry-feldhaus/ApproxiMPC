@@ -4,6 +4,7 @@ Features:
   - YAML-based configuration management
   - Lap-based episode termination
   - Probabilistic perturbation injection (80% clean, 20% perturbed)
+    - Optional persistent perturbation bursts (same shove held for multiple steps)
   - DAgger-style dual action labeling (expert vs. executed)
 """
 
@@ -346,20 +347,36 @@ def process_scan(scan: np.ndarray, lidar_cfg: dict) -> np.ndarray:
 class PerturbationManager:
     """Manages probabilistic perturbation (shove) injection and cooldown."""
 
-    def __init__(self, probability: float, shove_magnitude: float, min_steps_between: int):
+    def __init__(
+        self,
+        probability: float,
+        shove_magnitude: float,
+        min_steps_between: int,
+        hold_steps_min: int,
+        hold_steps_max: int,
+    ):
         """
         Args:
             probability: Probability of perturbation at each step [0.0-1.0]
             shove_magnitude: Magnitude of steering shove (radians)
             min_steps_between: Minimum steps between perturbations (cooldown)
+            hold_steps_min: Minimum number of steps to hold a shove once triggered
+            hold_steps_max: Maximum number of steps to hold a shove once triggered
         """
         self.probability = probability
         self.shove_magnitude = shove_magnitude
         self.min_steps_between = min_steps_between
         self.last_shove_step = -min_steps_between  # Allow first shove immediately
+        self.hold_steps_min = hold_steps_min
+        self.hold_steps_max = hold_steps_max
+        self.active_noise = np.zeros(2, dtype=np.float32)
+        self.active_steps_remaining = 0
 
     def should_perturb(self, current_step: int) -> bool:
         """Determine if we should apply perturbation at this step."""
+        if self.active_steps_remaining > 0:
+            return True
+
         if current_step - self.last_shove_step < self.min_steps_between:
             return False
         return np.random.random() < self.probability
@@ -371,10 +388,17 @@ class PerturbationManager:
         Returns:
             (perturbed_action, noise_vector)
         """
+        if self.active_steps_remaining > 0:
+            noise = self.active_noise
+            self.active_steps_remaining -= 1
+            return action + noise, noise
+
         noise = np.array([np.random.randn() * self.shove_magnitude, 0.0], dtype=np.float32)
-        perturbed = action + noise
+        self.active_noise = noise
+        hold_steps = int(np.random.randint(self.hold_steps_min, self.hold_steps_max + 1))
+        self.active_steps_remaining = max(0, hold_steps - 1)
         self.last_shove_step = current_step
-        return perturbed, noise
+        return action + noise, noise
 
 
 def parse_args() -> argparse.Namespace:
@@ -520,14 +544,28 @@ def main() -> None:
         )
 
     # Initialize perturbation manager if enabled
+    perturb_cfg = cfg.get("perturbation", {})
     perturbation_mgr = None
-    if cfg["perturbation"]["enabled"]:
+    if bool(perturb_cfg.get("enabled", False)):
+        hold_steps_min = int(perturb_cfg.get("hold_steps_min", 1))
+        hold_steps_max = int(perturb_cfg.get("hold_steps_max", hold_steps_min))
+        if hold_steps_min < 1:
+            raise ValueError("perturbation.hold_steps_min must be >= 1")
+        if hold_steps_max < hold_steps_min:
+            raise ValueError("perturbation.hold_steps_max must be >= perturbation.hold_steps_min")
+
         perturbation_mgr = PerturbationManager(
-            probability=cfg["perturbation"]["probability"],
-            shove_magnitude=cfg["perturbation"]["shove_magnitude"],
-            min_steps_between=cfg["perturbation"]["min_steps_between_shoves"],
+            probability=float(perturb_cfg.get("probability", 0.2)),
+            shove_magnitude=float(perturb_cfg.get("shove_magnitude", 0.3)),
+            min_steps_between=int(perturb_cfg.get("min_steps_between_shoves", 0)),
+            hold_steps_min=hold_steps_min,
+            hold_steps_max=hold_steps_max,
         )
-        print(f"Perturbations enabled: {cfg['perturbation']['probability']:.1%} probability")
+        print(
+            "Perturbations enabled: "
+            f"{float(perturb_cfg.get('probability', 0.2)):.1%} probability, "
+            f"hold_steps=[{hold_steps_min}, {hold_steps_max}]"
+        )
 
     # Data collection arrays
     observations = []
@@ -546,7 +584,7 @@ def main() -> None:
     collision_flags = []
     boundary_flags = []
     stmpc_status_codes = [] if controller_cfg["mode"] == "stmpc" else None
-    noise_vectors = [] if cfg["perturbation"]["enabled"] and cfg["dagger"]["record_noise_vectors"] else None
+    noise_vectors = [] if bool(perturb_cfg.get("enabled", False)) and cfg["dagger"]["record_noise_vectors"] else None
     lidar_observations = [] if lidar_cfg["enabled"] else None
     lidar_next_observations = [] if lidar_cfg["enabled"] else None
     raw_lidar_observations = [] if lidar_cfg["enabled"] and lidar_cfg["store_raw"] else None
@@ -790,7 +828,7 @@ def main() -> None:
     if stmpc_status_codes is not None:
         save_dict["stmpc_status_codes"] = np.asarray(stmpc_status_codes, dtype=np.int32)
 
-    if noise_vectors is not None and cfg["perturbation"]["enabled"]:
+    if noise_vectors is not None and bool(perturb_cfg.get("enabled", False)):
         noise_arr = np.stack(noise_vectors).astype(np.float32)
         save_dict["noise_vectors"] = noise_arr
 
@@ -841,8 +879,12 @@ def main() -> None:
             "stmpc": controller_cfg["stmpc"],
         },
         "stmpc_reset_config": stmpc_reset_cfg,
-        "perturbation_enabled": cfg["perturbation"]["enabled"],
-        "perturbation_probability": cfg["perturbation"]["probability"] if cfg["perturbation"]["enabled"] else None,
+        "perturbation_enabled": bool(perturb_cfg.get("enabled", False)),
+        "perturbation_probability": float(perturb_cfg.get("probability", 0.2)) if bool(perturb_cfg.get("enabled", False)) else None,
+        "perturbation_shove_magnitude": float(perturb_cfg.get("shove_magnitude", 0.3)) if bool(perturb_cfg.get("enabled", False)) else None,
+        "perturbation_min_steps_between_shoves": int(perturb_cfg.get("min_steps_between_shoves", 0)) if bool(perturb_cfg.get("enabled", False)) else None,
+        "perturbation_hold_steps_min": int(perturb_cfg.get("hold_steps_min", 1)) if bool(perturb_cfg.get("enabled", False)) else None,
+        "perturbation_hold_steps_max": int(perturb_cfg.get("hold_steps_max", int(perturb_cfg.get("hold_steps_min", 1)))) if bool(perturb_cfg.get("enabled", False)) else None,
         "dagger_enabled": cfg["dagger"]["enabled"],
         "num_transitions": int(obs_arr.shape[0]),
         "num_perturbed_steps": int(np.sum(perturbed_arr)),

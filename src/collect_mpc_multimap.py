@@ -105,6 +105,37 @@ def run_combo(
     )
 
 
+def get_combo_quality_status(combo_cfg_path: Path, combo_output_dir: Path) -> tuple[str, dict | None]:
+    """Return combo status from collector metadata if available.
+
+    Status values:
+      - "ok": run reached lap target with no collision/boundary termination.
+      - "failed/collision": collision, boundary, or non-lap terminal outcome.
+      - "failed": metadata missing/corrupt.
+    """
+    try:
+        combo_cfg = load_yaml(combo_cfg_path)
+        output_filename = combo_cfg.get("output", {}).get("output_filename")
+        if not output_filename:
+            return "failed", None
+
+        meta_path = combo_output_dir / Path(str(output_filename)).with_suffix(".json")
+        if not meta_path.exists():
+            return "failed", None
+
+        meta = json.loads(meta_path.read_text())
+        end_reasons = meta.get("episode_end_reasons") or []
+        end_reason = end_reasons[0] if end_reasons else None
+        collisions = int(meta.get("num_collision_steps", 0))
+        boundaries = int(meta.get("num_boundary_steps", 0))
+
+        if end_reason == "lap_target_reached" and collisions == 0 and boundaries == 0:
+            return "ok", meta
+        return "failed: collision", meta
+    except Exception:
+        return "failed", None
+
+
 def main() -> None:
     args = parse_args()
     cfg_path = Path(args.config) if args.config else get_default_config_path()
@@ -242,9 +273,22 @@ def main() -> None:
         if proc is None:
             exit_code = -1
             status = "failed"
+            end_reason = None
+            collisions = None
+            boundaries = None
         else:
             exit_code = int(proc.returncode)
-            status = "ok" if proc.returncode == 0 else "failed"
+            if proc.returncode == 0:
+                status, meta = get_combo_quality_status(combo_cfg_path, combo_output_dir)
+                end_reasons = (meta or {}).get("episode_end_reasons") or []
+                end_reason = end_reasons[0] if end_reasons else None
+                collisions = (meta or {}).get("num_collision_steps")
+                boundaries = (meta or {}).get("num_boundary_steps")
+            else:
+                status = "failed"
+                end_reason = None
+                collisions = None
+                boundaries = None
 
         combo_status = {
             "index": idx,
@@ -254,6 +298,9 @@ def main() -> None:
             "output_dir": str(combo_output_dir),
             "exit_code": exit_code,
             "status": status,
+            "episode_end_reason": end_reason,
+            "num_collision_steps": collisions,
+            "num_boundary_steps": boundaries,
         }
         manifest["combos"].append(combo_status)
 
@@ -267,7 +314,7 @@ def main() -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     n_ok = sum(1 for c in manifest["combos"] if c["status"] == "ok")
-    n_fail = sum(1 for c in manifest["combos"] if c["status"] == "failed")
+    n_fail = sum(1 for c in manifest["combos"] if c["status"] != "ok")
     print(f"Finished multi-map run: ok={n_ok}, failed={n_fail}")
     print(f"Manifest: {manifest_path}")
 
