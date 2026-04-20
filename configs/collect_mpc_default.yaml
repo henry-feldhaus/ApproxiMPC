@@ -76,6 +76,12 @@ lidar:
     n_bins: 60     # Number of pooled lidar bins saved per step
     method: min    # Pooling method: min (obstacle-sensitive) or mean
 
+path_features:
+  enabled: true                 # Collect centerline curvature lookahead features per transition
+  lookahead_m: [1.0, 2.0, 3.0, 5.0, 8.0]  # Distances ahead (meters) for curvature sampling
+  include_current_kappa: true   # Also save curvature at the current progress anchor
+  dtype: float32                # Storage dtype for path feature arrays: float16 or float32
+
 perturbation:
   enabled: false               # Enable probabilistic steering shove injection for training diversity
   probability: 0.2             # Probability of perturbation at each step (0.0-1.0, 0.2 = 20% perturbed)

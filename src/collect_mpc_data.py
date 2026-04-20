@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -163,6 +164,30 @@ def get_lidar_config(cfg: dict, controller_cfg: dict) -> dict:
             "n_bins": n_bins,
             "method": method,
         },
+    }
+
+
+def get_path_feature_config(cfg: dict) -> dict:
+    """Normalize centerline-derived path feature settings from YAML."""
+    path_cfg = cfg.get("path_features", {})
+
+    dtype = str(path_cfg.get("dtype", "float32")).lower().strip()
+    if dtype not in {"float16", "float32"}:
+        raise ValueError("path_features.dtype must be one of: float16, float32")
+
+    lookahead_raw = path_cfg.get("lookahead_m", [1.0, 2.0, 3.0, 5.0, 8.0])
+    if not isinstance(lookahead_raw, list) or len(lookahead_raw) == 0:
+        raise ValueError("path_features.lookahead_m must be a non-empty list")
+
+    lookahead_m = np.asarray([float(v) for v in lookahead_raw], dtype=np.float64)
+    if np.any(lookahead_m < 0.0):
+        raise ValueError("path_features.lookahead_m values must be >= 0")
+
+    return {
+        "enabled": bool(path_cfg.get("enabled", True)),
+        "lookahead_m": lookahead_m,
+        "include_current_kappa": bool(path_cfg.get("include_current_kappa", True)),
+        "dtype": dtype,
     }
 
 
@@ -385,6 +410,7 @@ def main() -> None:
     cfg = load_config(config_path)
     controller_cfg = get_controller_config(cfg)
     lidar_cfg = get_lidar_config(cfg, controller_cfg)
+    path_cfg = get_path_feature_config(cfg)
     lap_cfg = get_lap_termination_config(cfg["run"])
     if lap_cfg["method"] != "s_wrap":
         print(f"WARNING: Unsupported lap_termination.method='{lap_cfg['method']}', using 's_wrap'")
@@ -414,6 +440,12 @@ def main() -> None:
             "Lap termination: "
             f"enabled=True, target_laps={lap_cfg['target_laps']}, method={lap_cfg['method']}"
         )
+    if path_cfg["enabled"]:
+        print(
+            "Path features: "
+            f"enabled=True, lookahead_m={path_cfg['lookahead_m'].tolist()}, "
+            f"include_current_kappa={path_cfg['include_current_kappa']}, dtype={path_cfg['dtype']}"
+        )
 
     # Initialize environment
     env_config = get_collect_env_config(cfg, cfg["run"]["steps_per_episode"], controller_cfg, lidar_cfg)
@@ -439,6 +471,37 @@ def main() -> None:
             speed_profile=speed_profile_cfg,
         )
         stmpc_reset_cfg = None
+
+    path_centerline_ss = None
+    path_centerline_ks = None
+    path_track_length = 0.0
+    path_centerline_size = 0
+    if path_cfg["enabled"]:
+        centerline = env.unwrapped.track.centerline
+        path_centerline_ss = np.asarray(centerline.ss, dtype=np.float64)
+        path_centerline_ks = np.asarray(centerline.ks, dtype=np.float64)
+        path_track_length = float(centerline.spline.s[-1])
+        path_centerline_size = int(path_centerline_ss.shape[0])
+
+        if path_centerline_ss.ndim != 1 or path_centerline_ks.ndim != 1:
+            raise ValueError("Centerline ss/ks arrays must be 1-D")
+        if path_centerline_size == 0 or path_centerline_size != int(path_centerline_ks.shape[0]):
+            raise ValueError("Centerline ss/ks arrays must be non-empty and same length")
+        if np.any(np.diff(path_centerline_ss) <= 0):
+            raise ValueError("Centerline ss must be strictly increasing for searchsorted lookup")
+
+        def lookup_path_curvature_features(s_anchor: float) -> tuple[int, np.ndarray, float]:
+            s_anchor_wrapped = float(s_anchor) % path_track_length
+
+            idx_anchor = int(np.searchsorted(path_centerline_ss, s_anchor_wrapped, side="left"))
+            if idx_anchor >= path_centerline_size:
+                idx_anchor = 0
+
+            s_queries = np.mod(s_anchor_wrapped + path_cfg["lookahead_m"], path_track_length)
+            idxs = np.searchsorted(path_centerline_ss, s_queries, side="left")
+            idxs = np.where(idxs >= path_centerline_size, 0, idxs).astype(np.int32)
+            kappa_values = path_centerline_ks[idxs]
+            return idx_anchor, kappa_values, s_anchor_wrapped
 
     effective_steps_per_episode = int(cfg["run"]["steps_per_episode"])
     if lap_cfg["enabled"] and lap_cfg["auto_timeout"]["enabled"]:
@@ -488,6 +551,10 @@ def main() -> None:
     lidar_next_observations = [] if lidar_cfg["enabled"] else None
     raw_lidar_observations = [] if lidar_cfg["enabled"] and lidar_cfg["store_raw"] else None
     raw_lidar_next_observations = [] if lidar_cfg["enabled"] and lidar_cfg["store_raw"] else None
+    path_curvature_lookahead = [] if path_cfg["enabled"] else None
+    path_s_anchor = [] if path_cfg["enabled"] else None
+    path_centerline_idx_anchor = [] if path_cfg["enabled"] else None
+    path_kappa_current = [] if path_cfg["enabled"] and path_cfg["include_current_kappa"] else None
 
     try:
         global_step = 0  # Track global step count across episodes
@@ -524,6 +591,7 @@ def main() -> None:
             end_reason = "unknown"
             lap_tracker = LapTracker(env.unwrapped.track, wrap_threshold_ratio=lap_cfg["wrap_threshold_ratio"])
             lap_tracker.reset(float(obs["agent_0"]["pose_x"]), float(obs["agent_0"]["pose_y"]))
+            current_s_for_teacher = float(lap_tracker.prev_s)
             collector_laps = 0
             last_env_laps = 0
             last_collision = False
@@ -532,6 +600,13 @@ def main() -> None:
             truncated = False
             for step_idx in range(effective_steps_per_episode):
                 obs_vec = obs_to_vec(obs)
+                if path_cfg["enabled"]:
+                    idx_anchor, kappa_lookahead_vals, s_anchor = lookup_path_curvature_features(current_s_for_teacher)
+                    path_s_anchor.append(s_anchor)
+                    path_centerline_idx_anchor.append(idx_anchor)
+                    path_curvature_lookahead.append(kappa_lookahead_vals.astype(np.float32, copy=False))
+                    if path_kappa_current is not None:
+                        path_kappa_current.append(float(path_centerline_ks[idx_anchor]))
                 if lidar_cfg["enabled"]:
                     scan = extract_scan(obs)
                     lidar_observations.append(process_scan(scan, lidar_cfg))
@@ -563,6 +638,7 @@ def main() -> None:
                     float(next_obs["agent_0"]["pose_x"]),
                     float(next_obs["agent_0"]["pose_y"]),
                 )
+                current_s_for_teacher = float(lap_tracker.prev_s)
                 last_env_laps = int(float(info.get("lap_counts", 0)))
                 last_collision = bool(info.get("collision", False))
                 last_boundary = bool(info.get("boundary_exceeded", False))
@@ -662,12 +738,34 @@ def main() -> None:
     lidar_next_arr = None
     raw_lidar_arr = None
     raw_lidar_next_arr = None
+    path_curvature_lookahead_arr = None
+    path_s_anchor_arr = None
+    path_centerline_idx_anchor_arr = None
+    path_kappa_current_arr = None
     if lidar_cfg["enabled"]:
         lidar_arr = np.stack(lidar_observations).astype(lidar_dtype)
         lidar_next_arr = np.stack(lidar_next_observations).astype(lidar_dtype)
         if raw_lidar_observations is not None:
             raw_lidar_arr = np.stack(raw_lidar_observations).astype(lidar_dtype)
             raw_lidar_next_arr = np.stack(raw_lidar_next_observations).astype(lidar_dtype)
+
+    if path_cfg["enabled"]:
+        path_dtype = np.float16 if path_cfg["dtype"] == "float16" else np.float32
+        path_curvature_lookahead_arr = np.stack(path_curvature_lookahead).astype(path_dtype)
+        path_s_anchor_arr = np.asarray(path_s_anchor, dtype=path_dtype)
+        path_centerline_idx_anchor_arr = np.asarray(path_centerline_idx_anchor, dtype=np.int32)
+        if path_kappa_current is not None:
+            path_kappa_current_arr = np.asarray(path_kappa_current, dtype=path_dtype)
+
+        n_transitions = int(obs_arr.shape[0])
+        if path_curvature_lookahead_arr.shape[0] != n_transitions:
+            raise ValueError("Path curvature lookahead rows must match transition count")
+        if path_s_anchor_arr.shape[0] != n_transitions:
+            raise ValueError("Path s anchors must match transition count")
+        if path_centerline_idx_anchor_arr.shape[0] != n_transitions:
+            raise ValueError("Path centerline idx anchors must match transition count")
+        if path_kappa_current_arr is not None and path_kappa_current_arr.shape[0] != n_transitions:
+            raise ValueError("Path current curvature values must match transition count")
 
     # Build save dict
     save_dict = {
@@ -706,6 +804,22 @@ def main() -> None:
         if raw_lidar_arr is not None and raw_lidar_next_arr is not None:
             save_dict["raw_lidar_scans"] = raw_lidar_arr
             save_dict["next_raw_lidar_scans"] = raw_lidar_next_arr
+
+    if path_cfg["enabled"] and path_curvature_lookahead_arr is not None:
+        def _fmt_kappa_name(distance_m: float) -> str:
+            token = f"{float(distance_m):.3f}".rstrip("0").rstrip(".").replace(".", "p")
+            return f"kappa_{token}m"
+
+        save_dict["path_curvature_lookahead"] = path_curvature_lookahead_arr
+        save_dict["path_curvature_lookahead_m"] = path_cfg["lookahead_m"].astype(path_curvature_lookahead_arr.dtype)
+        save_dict["path_curvature_lookahead_names"] = np.asarray(
+            [_fmt_kappa_name(d) for d in path_cfg["lookahead_m"]],
+            dtype="U32",
+        )
+        save_dict["path_s_anchor"] = path_s_anchor_arr
+        save_dict["path_centerline_idx_anchor"] = path_centerline_idx_anchor_arr
+        if path_kappa_current_arr is not None:
+            save_dict["path_kappa_current"] = path_kappa_current_arr
 
     np.savez_compressed(out_path, **save_dict)
 
@@ -755,6 +869,18 @@ def main() -> None:
             "next_raw_lidar_shape": list(raw_lidar_next_arr.shape) if raw_lidar_next_arr is not None else None,
         },
     }
+
+    if path_cfg["enabled"] and path_curvature_lookahead_arr is not None:
+        metadata["path_features"] = {
+            "enabled": True,
+            "lookahead_m": [float(v) for v in path_cfg["lookahead_m"].tolist()],
+            "include_current_kappa": path_cfg["include_current_kappa"],
+            "dtype": path_cfg["dtype"],
+            "path_curvature_lookahead_shape": list(path_curvature_lookahead_arr.shape),
+            "path_s_anchor_shape": list(path_s_anchor_arr.shape),
+            "path_centerline_idx_anchor_shape": list(path_centerline_idx_anchor_arr.shape),
+            "path_kappa_current_shape": list(path_kappa_current_arr.shape) if path_kappa_current_arr is not None else None,
+        }
 
     if stmpc_status_codes is not None:
         status_arr = np.asarray(stmpc_status_codes, dtype=np.int32)
