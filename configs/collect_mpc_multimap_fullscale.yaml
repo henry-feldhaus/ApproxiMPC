@@ -43,8 +43,8 @@ collector_overrides:
   perturbation:
     enabled: true             # ENABLE perturbations for training diversity
     probability: 0.2          # 20% of steps receive steering shove
-    shove_magnitude: 0.3      # Magnitude of steering shove (radians)
-    min_steps_between_shoves: 20  # Cooldown: prevent shoves within 20 steps
+    shove_magnitude: 0.45     # Magnitude of steering shove (radians) - increased for stronger recovery examples
+    min_steps_between_shoves: 15  # Cooldown: prevent shoves within 15 steps (tighter recovery window)
   dagger:
     enabled: true             # ENABLE DAgger dual-action labeling
     record_noise_vectors: true # Record noise vectors for recovery supervision
