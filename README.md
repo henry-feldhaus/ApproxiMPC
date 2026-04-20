@@ -98,7 +98,7 @@ Output: `outputs/datasets/multimap_training/run_<timestamp>/` containing all map
 
 #### Interactive MPC Visualization
 
-Run the kinematic MPC controller in GUI mode (requires display):
+Run the kinematic MPC controller in GUI mode:
 
 ```bash
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/kmpc_race.py"
