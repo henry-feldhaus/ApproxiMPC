@@ -33,9 +33,11 @@ run:
   directions:  # Directions to sweep (order alternates per map)
     - normal
     - reverse
-  episodes_per_combo: 15      # Episodes per (map, direction) combination
-  render: false               # Disable rendering for unattended batch runs
-  stop_on_error: false        # Continue on failure (skip failed combo, continue to next)
+  episodes_per_combo: 15              # Episodes per (map, direction) combination
+  render: false                       # Disable rendering for unattended batch runs
+  stop_on_error: false                # Continue on failure (skip failed combo, continue to next)
+  retry_until_success: true           # Retry failed episodes until each combo reaches target episode count
+  max_attempts_per_combo: 30          # Max retries per combo. Prevents infinite loops
 
 execution:
   mode: parallel              # Parallel execution with isolated per-worker acados build artifacts
@@ -61,10 +63,10 @@ collector_overrides:
   perturbation:
     enabled: true             # ENABLE perturbations for training diversity
     probability: 0.25         # Stable qualitative setting
-    shove_magnitude: 0.2      # Stable qualitative setting
+    shove_magnitude: 0.15     # Stable qualitative setting
     min_steps_between_shoves: 500  # Stable qualitative setting
-    hold_steps_min: 10        # Persistent disturbance duration lower bound (steps)
-    hold_steps_max: 30        # Persistent disturbance duration upper bound (steps)
+    hold_steps_min: 5         # Persistent disturbance duration lower bound (steps)
+    hold_steps_max: 25        # Persistent disturbance duration upper bound (steps)
   dagger:
     enabled: true             # ENABLE DAgger dual-action labeling
     record_noise_vectors: true # Record noise vectors for recovery supervision
