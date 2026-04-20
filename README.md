@@ -77,21 +77,21 @@ docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/colle
 
 Output: `outputs/datasets/kmpc_Spielberg_<timestamp>.npz` + `.json`
 
-#### Full-Scale Multi-Map Collection (1.5-2 hours)
+#### Full-Scale Multi-Map Collection (multi-hour)
 
-Generate comprehensive training dataset across 7 test tracks with perturbations and DAgger labels:
+Generate comprehensive training dataset across 25 tracks with perturbations and DAgger labels:
 
 ```bash
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_multimap.py --config /app/configs/collect_mpc_multimap_fullscale.yaml"
 ```
 
 This runs:
-- **7 maps**: Spielberg, Budapest, Monza, Spa, Silverstone, Melbourne, Montreal
+- **25 maps**: race-track set plus Drift2 and Drift2_mirror (other drift variants excluded)
 - **2 directions each** (normal + reverse)
-- **10 episodes per combo** for rich diversity
+- **15 episodes per combo** for rich diversity
 - **Parallel execution** with 4 concurrent collectors
 - **Lidar data** (360 beams → 60 bins, clipped 0-15m)
-- **Perturbations** (20% stochastic steering shoves)
+- **Perturbations** (persistent steering disturbance bursts)
 - **DAgger labels** (expert + perturbed action pairs)
 
 Output: `outputs/datasets/multimap_training/run_<timestamp>/` containing all map/direction/episode datasets.
@@ -126,7 +126,7 @@ All collection parameters are in YAML. Three canonical configs provided:
 - ~5 min runtime
 
 **`configs/collect_mpc_multimap_fullscale.yaml`** (production):
-- 7 maps × 2 directions × 10 episodes
+- 25 maps × 2 directions × 15 episodes
 - Parallel execution (4 workers)
 - All features enabled (lidar, perturbation, DAgger)
 
@@ -156,7 +156,11 @@ lidar:
 
 perturbation:
   enabled: true        # inject stochastic steering shoves
-  probability: 0.2     # 20% of steps perturbed
+  probability: 0.25    # 25% chance to trigger a shove event (subject to cooldown)
+  shove_magnitude: 0.2 # steering shove magnitude (radians)
+  min_steps_between_shoves: 500
+  hold_steps_min: 10   # keep same shove active for at least this many steps
+  hold_steps_max: 30   # keep same shove active for at most this many steps
 
 dagger:
   enabled: true        # record expert recovery labels

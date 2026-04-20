@@ -46,20 +46,23 @@ lidar:
 ```yaml
 perturbation:
   enabled: true                   # Enable/disable steering shove perturbations
-  probability: 0.2                # Fraction of timesteps receiving a perturbation (0.2 = 20% of steps)
-  shove_magnitude: 0.45           # Steering angle perturbation (radians); 0.45 rad ≈ 25.8°
-  min_steps_between_shoves: 15    # Cooldown: minimum steps between consecutive shoves
+  probability: 0.25               # Probability of starting a perturbation event (subject to cooldown)
+  shove_magnitude: 0.2            # Steering angle perturbation (radians); 0.2 rad ≈ 11.5°
+  min_steps_between_shoves: 500   # Cooldown: minimum steps between perturbation event starts
+  hold_steps_min: 10              # Hold the same perturbation for at least this many steps
+  hold_steps_max: 30              # Hold the same perturbation for at most this many steps
 ```
 
 **Explanation:**
 - `enabled`: If `false`, no perturbations applied; MPC will track reference perfectly (poor recovery training).
-- `probability`: Lower (0.1) = fewer disturbances; higher (0.3) = more frequent recovery situations.
-- `shove_magnitude`: Larger values create more severe disturbances. 0.45 rad chosen to create trajectory-relevant recovery events without causing extreme instability.
-- `min_steps_between_shoves`: Prevents shoves from clustering. At 100 Hz, 15 steps = 150 ms between shoves (gives MPC time to recover).
+- `probability`: Event trigger probability when cooldown allows; lower (0.1) = fewer disturbances, higher (0.3) = more frequent disturbances.
+- `shove_magnitude`: Larger values create more severe disturbances. 0.2 rad is a moderate disturbance setting.
+- `min_steps_between_shoves`: Prevents event starts from clustering. At 100 Hz, 500 steps = 5.0 s between event starts.
+- `hold_steps_min/max`: Once triggered, the same noise vector is held for a random duration in `[hold_steps_min, hold_steps_max]` to create persistent disturbance bursts.
 - **When to adjust:** 
   - Increase magnitude if recovery behavior is weak in deployment
-  - Decrease probability to 0.15 if data has too many collisions from shoves
-  - Increase cooldown to 20 if you want longer, more natural recovery trajectories
+  - Decrease hold range if disturbances cause frequent boundary terminations
+  - Increase cooldown further to reduce disturbance frequency in narrow/technical maps
 
 ---
 
@@ -376,8 +379,9 @@ save_outputs = save_model_and_artifacts(
 |---------|----------|---------|---------|------------|
 | **EMA Steering Smoothing** | dataset_creation.ipynb Cell 5 | α=0.2 | Reduce bang-bang actuator chatter | ↑ Alpha for more smoothing |
 | **LiDAR Augmentation** | LSTM_training.ipynb Cell (loading) | Enabled | Add realistic sensor noise | σ=0.1m, dropout=5% |
-| **Perturbation Magnitude** | collect_mpc_multimap_fullscale.yaml | 0.45 rad | Steering disturbance strength | ↑ for harder recovery, ↓ for easier |
-| **Perturbation Frequency** | collect_mpc_multimap_fullscale.yaml | 0.2 (20%) | How often disturbances occur | ↑ for more recovery examples |
+| **Perturbation Magnitude** | collect_mpc_multimap_fullscale.yaml | 0.2 rad | Steering disturbance strength | ↑ for harder recovery, ↓ for easier |
+| **Perturbation Frequency** | collect_mpc_multimap_fullscale.yaml | 0.25 (event probability) | How often disturbance events start | ↑ for more recovery examples |
+| **Perturbation Persistence** | collect_mpc_multimap_fullscale.yaml | 10-30 steps | Duration of each disturbance burst | ↑ for longer off-center recoveries |
 | **LiDAR Bins** | collect_mpc_multimap_fullscale.yaml | 60 | Resolution of LiDAR input | ↑ for fine detail, ↓ for speed |
 | **SEQ_LENGTH** | LSTM_training.ipynb Section 0 | 100 | Context window (seconds) | 1 sec = 100 steps at 100 Hz |
 | **Split Mode** | LSTM_training.ipynb Section 0 | "map" | Cross-map generalization test | "episode" for quick validation |
@@ -428,7 +432,7 @@ EPOCHS = 2                  # ← Sanity check
 **Active Configuration (Enabled):**
 - EMA Smoothing: α=0.2 (dataset_creation.ipynb)
 - LiDAR Augmentation: σ=0.1m, dropout=5% (LSTM_training.ipynb)
-- Perturbations: 0.45 rad magnitude, 20% probability, 15-step cooldown (collect_mpc_multimap_fullscale.yaml)
+- Perturbations: 0.2 rad magnitude, 0.25 event probability, 500-step cooldown, 10-30 step hold (collect_mpc_multimap_fullscale.yaml)
 - Path Features: Centerline curvature lookahead at 1,2,3,5,8m (collect_mpc_default.yaml)
 
 All features work together to **reduce LSTM overfit** while maintaining **recovery learning capability**.
