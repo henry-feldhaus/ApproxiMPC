@@ -119,10 +119,11 @@ def load_model_bundle_from_config(config_path, device="cpu"):
 		cfg = json.load(f)
 
 	candidate_base_dir = cfg.get("artifact_dir")
-	if candidate_base_dir and os.path.isdir(candidate_base_dir):
+	# Use artifact_dir only if it exists and contains all required files, else fallback to config dir
+	required_files = [cfg["state_dict_file"], cfg["input_scaler_file"], cfg["target_scaler_file"]]
+	if candidate_base_dir and os.path.isdir(candidate_base_dir) and all(os.path.isfile(os.path.join(candidate_base_dir, f)) for f in required_files):
 		base_dir = candidate_base_dir
 	else:
-		# Keep loading robust when configs were moved across machines/workspaces.
 		base_dir = os.path.dirname(config_path)
 	model_path = os.path.join(base_dir, cfg["state_dict_file"])
 	input_scaler_path = os.path.join(base_dir, cfg["input_scaler_file"])

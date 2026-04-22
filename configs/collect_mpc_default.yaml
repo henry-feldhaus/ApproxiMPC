@@ -4,7 +4,7 @@
 run:
   episodes: 10              # Number of episodes to collect
   steps_per_episode: 6000   # Safety timeout in steps (episode should end by lap target before this)
-  render: false             # Render visualization during collection (disable for batch runs)
+  render: true             # Render visualization during collection (disable for batch runs)
   use_default_reset: false  # Use bridge start pose (false) instead of env.reset() default
   lap_termination:
     enabled: true              # Terminate episodes when lap count is reached
@@ -24,7 +24,7 @@ env:
   model: ks        # Legacy field (collector derives from controller.mode)
 
 controller:
-  mode: kmpc      # Expert controller: kmpc (constant speed) or stmpc (dynamic speed/steering)
+  mode: stmpc      # Expert controller: kmpc (constant speed) or stmpc (dynamic speed/steering)
   ref_speed: 4.0  # Reference speed target for MPC (m/s)
   kmpc:
     model: ks     # Bicycle model: ks (kinematic single-track)
@@ -44,17 +44,17 @@ controller:
     startup_speed_offset: 1.5     # Initial speed offset added to ref_speed during reset (m/s)
     reset_with_states: true       # Initialize vehicle state during reset (delta, yaw_rate, slip)
     initial_state:
-      delta: 0.0       # Initial steering angle (radians, 0 = straight)
-      speed: 3.0       # Initial longitudinal speed (m/s)
-      yaw_rate: 0.0    # Initial yaw rate (rad/s, angular velocity)
-      slip_angle: 0.0  # Initial slip angle (radians, vehicle sideslip)
+      delta: 0.0        # Initial steering angle (radians, 0 = straight)
+      speed: 3.0        # Initial longitudinal speed (m/s)
+      yaw_rate: 0.0     # Initial yaw rate (rad/s, angular velocity)
+      slip_angle: 0.0   # Initial slip angle (radians, vehicle sideslip)
     runtime_tuning:
-      enabled: true  # Enable online cost function weight tuning during collection
-      qalpha: 8.0    # Cost weight for heading alignment (Frenet alpha error)
-      qn: 50.0       # Cost weight for lateral deviation (Frenet n error)
-      qv: 15.0       # Cost weight for speed tracking error
-      qddelta: 1.0   # Cost weight for steering rate limiting
-      qjerk: 0.05    # Cost weight for jerk (acceleration change rate)
+      enabled: true     # Enable online cost function weight tuning during collection
+      qalpha: 8.0       # Cost weight for heading alignment (Frenet alpha error)
+      qn: 50.0          # Cost weight for lateral deviation (Frenet n error)
+      qv: 15.0          # Cost weight for speed tracking error
+      qddelta: 1.0      # Cost weight for steering rate limiting
+      qjerk: 0.05       # Cost weight for jerk (acceleration change rate)
       track_safety_margin: 0.30  # Safety margin to track boundary (meters)
       v_max: 8.0        # Maximum speed during MPC horizon (m/s)
       a_max: 3.0        # Maximum acceleration (m/s²)
@@ -75,6 +75,12 @@ lidar:
     enabled: true  # Downsample scans before saving
     n_bins: 60     # Number of pooled lidar bins saved per step
     method: min    # Pooling method: min (obstacle-sensitive) or mean
+
+path_features:
+  enabled: true                 # Collect centerline curvature lookahead features per transition
+  lookahead_m: [1.0, 2.0, 3.0, 5.0, 8.0]  # Distances ahead (meters) for curvature sampling
+  include_current_kappa: true   # Also save curvature at the current progress anchor
+  dtype: float32                # Storage dtype for path feature arrays: float16 or float32
 
 perturbation:
   enabled: false               # Enable probabilistic steering shove injection for training diversity

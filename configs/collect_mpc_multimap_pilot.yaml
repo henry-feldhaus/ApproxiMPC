@@ -1,0 +1,49 @@
+# Quick pilot run to validate fullscale settings before long collection.
+# Uses a representative subset of maps/directions with fewer episodes.
+
+base_collector_config: configs/collect_mpc_default.yaml
+
+run:
+  maps:
+    - YasMarina
+    - Spielberg
+    - Drift2_mirror
+  directions:
+    - normal
+    - reverse
+  episodes_per_combo: 3
+  render: false
+  stop_on_error: false
+  retry_until_success: true
+  max_attempts_per_combo: 9
+
+execution:
+  mode: parallel
+  max_workers: 4
+
+output:
+  root_dir: outputs/datasets/multimap_training
+  run_name: null
+
+collector_overrides:
+  lidar:
+    enabled: true
+    env_num_beams: 360
+    clip_min: 0.0
+    clip_max: 15.0
+    store_raw: false
+    dtype: float16
+    binning:
+      enabled: true
+      n_bins: 60
+      method: min
+  perturbation:
+    enabled: true
+    probability: 0.2
+    shove_magnitude: 0.15
+    min_steps_between_shoves: 500
+    hold_steps_min: 5
+    hold_steps_max: 25
+  dagger:
+    enabled: true
+    record_noise_vectors: true

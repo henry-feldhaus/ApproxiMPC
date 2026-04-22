@@ -1,0 +1,19 @@
+[project]
+name = "lstm-training"
+version = "0.1.0"
+description = "LSTM notebook dependencies"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "onnx",
+    "onnxruntime",
+    "joblib",
+    "numpy",
+    "torchvision",
+    "scikit-learn",
+    "onnxscript",
+    "networkx",
+    "matplotlib",
+    "pandas",
+    "ipykernel",
+]

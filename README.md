@@ -17,6 +17,7 @@ Primary entrypoints:
 - `src/stmpc_race.py`: visual single-track MPC run.
 - `src/collect_mpc_data.py`: single-map data collection.
 - `src/collect_mpc_multimap.py`: multi-map orchestration.
+- `LSTM_training/scripts/pytorch_to_onnx_converter.py`: export a trained LSTM checkpoint to ONNX.
 
 Primary configs:
 - `configs/collect_mpc_default.yaml`: default single-run collector config.
@@ -76,28 +77,28 @@ docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/colle
 
 Output: `outputs/datasets/kmpc_Spielberg_<timestamp>.npz` + `.json`
 
-#### Full-Scale Multi-Map Collection (1.5-2 hours)
+#### Full-Scale Multi-Map Collection (multi-hour)
 
-Generate comprehensive training dataset across 7 test tracks with perturbations and DAgger labels:
+Generate comprehensive training dataset across 25 tracks with perturbations and DAgger labels:
 
 ```bash
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_multimap.py --config /app/configs/collect_mpc_multimap_fullscale.yaml"
 ```
 
 This runs:
-- **7 maps**: Spielberg, Budapest, Monza, Spa, Silverstone, Melbourne, Montreal
+- **25 maps**: race-track set plus Drift2 and Drift2_mirror (other drift variants excluded)
 - **2 directions each** (normal + reverse)
-- **10 episodes per combo** for rich diversity
+- **15 episodes per combo** for rich diversity
 - **Parallel execution** with 4 concurrent collectors
 - **Lidar data** (360 beams → 60 bins, clipped 0-15m)
-- **Perturbations** (20% stochastic steering shoves)
+- **Perturbations** (persistent steering disturbance bursts)
 - **DAgger labels** (expert + perturbed action pairs)
 
 Output: `outputs/datasets/multimap_training/run_<timestamp>/` containing all map/direction/episode datasets.
 
 #### Interactive MPC Visualization
 
-Run the kinematic MPC controller in GUI mode (requires display):
+Run the kinematic MPC controller in GUI mode:
 
 ```bash
 docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/kmpc_race.py"
@@ -125,7 +126,7 @@ All collection parameters are in YAML. Three canonical configs provided:
 - ~5 min runtime
 
 **`configs/collect_mpc_multimap_fullscale.yaml`** (production):
-- 7 maps × 2 directions × 10 episodes
+- 25 maps × 2 directions × 15 episodes
 - Parallel execution (4 workers)
 - All features enabled (lidar, perturbation, DAgger)
 
@@ -155,7 +156,11 @@ lidar:
 
 perturbation:
   enabled: true        # inject stochastic steering shoves
-  probability: 0.2     # 20% of steps perturbed
+  probability: 0.25    # 25% chance to trigger a shove event (subject to cooldown)
+  shove_magnitude: 0.2 # steering shove magnitude (radians)
+  min_steps_between_shoves: 500
+  hold_steps_min: 10   # keep same shove active for at least this many steps
+  hold_steps_max: 30   # keep same shove active for at most this many steps
 
 dagger:
   enabled: true        # record expert recovery labels
@@ -247,19 +252,125 @@ In multi-map configs:
 - `episodes_per_combo` controls run count per map/direction
 - `collector_overrides` applies deep overrides onto the base collector config
 
-## Baseline Validation
+## Exporting and Using LSTM ONNX Models
 
-Use this to verify the main MPC path remains healthy after code changes:
+### Batch Export: Export All Models in a Directory
+
+To export ONNX models for all subdirectories (each containing a model) in a parent directory, you must set PYTHONPATH so the script can find the LSTM_training module:
 
 ```bash
-docker compose run --rm app bash -c 'cd /app && PYTHONPATH=/app python - <<"PY"
-import gymnasium as gym
-import numpy as np
-import gymkhana
-from mpc.gym_bridge import KMPCGymBridge
+for d in LSTM_training/models/4-16-25\ Models/*; do 
+  if [ -d "$d" ] && [ "$(basename "$d")" != "onnx_models" ]; then
+    PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "$d"
+  fi
+done
+```
 
-config = {
-    "map": "Spielberg",
+This will export ONNX models and scalers for every model directory found under `LSTM_training/models/4-16-25 Models/`, skipping the `onnx_models` folder.
+
+### 1. Exporting a Trained LSTM Model to ONNX
+
+Before you can use an ONNX model for inference, you must export it from a trained LSTM checkpoint. Use the exporter script as follows:
+
+
+**Recommended:**
+```bash
+PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
+```
+This will automatically find the config and export the ONNX and scaler files to `LSTM_training/models/4-16-25 Models/onnx_models/<model_name>/`.
+
+**Manual:**
+```bash
+PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py \
+  --config LSTM_training/models/4-16-25\ Models/LSTM_1B_128D_Pred_1/LSTM_1B_128D_config.json \
+  --output LSTM_training/models/4-16-25\ Models/onnx_models/LSTM_1B_128D/LSTM_1B_128D.onnx
+```
+
+**What gets exported:**
+- `<model_name>.onnx` — The ONNX model file
+- `<model_name>_input_scaler.pkl` — Input scaler (joblib)
+- `<model_name>_target_scaler.pkl` — Output scaler (joblib)
+
+**Note:** For small models, only a `.onnx` file is created. For very large models (>2GB), a `.onnx.data` file may also be created. Both must be kept together for inference if present.
+
+### 2. Inference with Exported ONNX Model
+
+
+After exporting, you can use the ONNX model and scalers for inference (no PYTHONPATH needed for inference):
+
+```python
+import onnxruntime as ort
+import numpy as np
+import joblib
+
+# Paths to exported artifacts (per-model subdirectory)
+onnx_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D/LSTM_1B_128D.onnx"
+input_scaler_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D/LSTM_1B_128D_input_scaler.pkl"
+target_scaler_path = "LSTM_training/models/4-16-25 Models/onnx_models/LSTM_1B_128D/LSTM_1B_128D_target_scaler.pkl"
+
+# Load scalers
+input_scaler = joblib.load(input_scaler_path)
+target_scaler = joblib.load(target_scaler_path)
+
+# Example input (batch_size=1, seq_len=10, input_dim=63)
+raw_input = np.random.rand(1, 10, 63).astype(np.float32)
+
+# Preprocess input
+scaled_input = input_scaler.transform(raw_input.reshape(-1, raw_input.shape[-1])).reshape(raw_input.shape)
+
+# Run ONNX inference
+sess = ort.InferenceSession(onnx_path)
+output = sess.run(None, {"input": scaled_input})[0]
+
+# Postprocess output
+pred = target_scaler.inverse_transform(output)
+print("Predicted action(s):", pred)
+```
+
+### Additional ONNX Export Notes
+
+- **Per-model output layout:** exports are placed under `LSTM_training/models/.../onnx_models/<model_name>/` containing:
+  - `<model_name>.onnx`
+  - `<model_name>_input_scaler.pkl`
+  - `<model_name>_target_scaler.pkl`
+
+- **PYTHONPATH requirement:** Run the exporter with `PYTHONPATH=$(pwd)` so the `LSTM_training` package can be imported. Example (single model):
+```bash
+PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
+```
+
+- **ONNX external-data (`*.onnx.data*`) files:** Depending on your PyTorch/ONNX toolchain, the exporter may write external-data shards for large tensors. The exporter script implements two mitigations:
+  - attempt `use_external_data_format=False` during `torch.onnx.export` when supported by your torch version,
+  - post-process the exported file by loading with `onnx.load(..., load_external_data=True)` and re-saving with `onnx.save_model(...)` to re-embed external weights into a single `.onnx` file, then remove any `.onnx.data*` shards.
+
+- **Manual re-embedding (if needed):** If you already have an `.onnx` plus `.onnx.data*` files and want a single file, run:
+```bash
+python - <<'PY'
+import onnx
+m = onnx.load('path/to/model.onnx', load_external_data=True)
+onnx.save_model(m, 'path/to/model_reembedded.onnx')
+PY
+```
+
+- **Exporter behavior:** To avoid tracing errors with torch/dynamo, the exporter fixes `seq_len` (only the batch dimension is dynamic). If you require variable sequence length in ONNX, update and test the exporter carefully — some torch/dynamo combinations require `dynamic_shapes` instead of `dynamic_axes`.
+
+- **Recap commands:**
+```bash
+# Single model
+PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "LSTM_training/models/4-16-25 Models/LSTM_1B_128D_Pred_1"
+
+# Batch (skip onnx_models dir)
+for d in LSTM_training/models/4-16-25\ Models/*; do
+  if [ -d "$d" ] && [ "$(basename "$d")" != "onnx_models" ]; then
+    PYTHONPATH=$(pwd) python LSTM_training/scripts/pytorch_to_onnx_converter.py --model_dir "$d"
+  fi
+done
+```
+
+**Important:**
+ - Always use the exported input/output scalers for normalization.
+ - If a `.onnx.data` file is present, keep it in the same directory as the `.onnx` file.
+ - For most models, only the `.onnx` file is needed.
     "num_agents": 1,
     "timestep": 0.01,
     "integrator": "rk4",
