@@ -16,4 +16,5 @@ dependencies = [
     "matplotlib",
     "pandas",
     "ipykernel",
+    "wandb>=0.26.0",
 ]
