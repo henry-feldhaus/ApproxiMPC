@@ -175,7 +175,6 @@ scratch
 .codex
 
 # Training outputs (models, videos, logs) from tensorboard, wandb
-
 outputs/
 wandb/
 runs/
