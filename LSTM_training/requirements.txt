@@ -8,3 +8,4 @@ scikit-learn
 onnxscript
 networkx
 wandb
+nbformat
