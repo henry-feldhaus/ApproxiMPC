@@ -1,0 +1,52 @@
+run:
+  render: true
+  use_default_reset: false
+  steps_per_episode: 6000
+  lap_termination:
+    enabled: true
+    target_laps: 1
+    wrap_threshold_ratio: 0.2
+
+env:
+  map: Spielberg
+  track_direction: normal
+  timestep: 0.01
+  integrator: rk4
+  model: std
+  training_mode: race
+
+artifacts:
+  model_config_path: LSTM_training/models/LSTM_H128_L1_EmbNoEmb_FC_128_64_32/20260423/LSTM_H128_L1_EmbNoEmb_FC_128_64_32_config.json
+  onnx_model_path: ""
+  input_scaler_path: ""
+  target_scaler_path: ""
+  auto_export_if_missing: true
+  export_device: cpu
+
+lidar:
+  env_num_beams: 360
+  clip_min: 0.0
+  clip_max: 15.0
+  n_bins: 60
+  binning_method: min
+
+path_features:
+  lookahead_m: [1.0, 2.0, 3.0, 5.0, 8.0]
+
+runtime:
+  startup_speed: 1.5
+  max_speed: 8.0
+  max_steering_angle: 0.4
+
+logging:
+  output_file: outputs/lstm_eval_logs/lstm_eval_log.npz
+  goal_center_x: 0.0
+  goal_center_y: 0.0
+  goal_offset_x: 0.0
+  goal_offset_y: 0.0
+  use_goal_offset: true
+  goal_radius: 1.0
+  start_center_x: 0.0
+  start_center_y: 0.0
+  use_start_pose_as_start_center: true
+  start_radius: 1.0
