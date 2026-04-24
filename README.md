@@ -57,15 +57,150 @@ PY"
 
 ApproxiMPC uses YAML-driven configuration for all data collection. Collections produce compressed NPZ datasets with metadata in JSON.
 
-#### Quick Validation (5-10 min)
+### LSTM vs MPC Comparison Workflow
 
-Test the full pipeline with minimal data:
+Use this workflow when you want one LSTM run and one MPC run on the same map with a shared `.npz` schema.
+
+#### 1. Build and Start the Dev Container
 
 ```bash
-docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_multimap.py --config /app/configs/collect_mpc_multimap_test.yaml"
+cd /home/henry/Documents/Coursework/f1_16663/external/ApproxiMPC
+docker compose build app
+docker compose run --rm app bash
 ```
 
-This runs 3 maps × 2 directions × 2 episodes with 4 parallel workers.
+All commands below assume you are inside the container at `/app`.
+
+#### 2. Enable Rendering If You Want to Watch the Runs
+
+On the host:
+
+```bash
+xhost +local:docker
+```
+
+Inside the container:
+
+```bash
+export DISPLAY=:0
+```
+
+If you do not want rendering, set `run.render: false` in the relevant config files.
+
+#### 3. Confirm Artifact and Output Paths
+
+Current comparison-related configs:
+
+- `configs/lstm_eval_default.yaml`
+- `configs/collect_mpc_first_comparison.yaml`
+- `configs/mpc_compare_default.yaml`
+
+Before running:
+
+- confirm the LSTM artifact paths in `configs/lstm_eval_default.yaml`
+- confirm the MPC output filename in `configs/collect_mpc_first_comparison.yaml`
+- confirm the input dataset path in `configs/mpc_compare_default.yaml`
+
+#### 4. Export the LSTM Model to ONNX
+
+Run this from inside the container:
+
+```bash
+cd /app/LSTM_training
+PYTHONPATH=/app python3 scripts/pytorch_to_onnx_converter.py \
+  --config models/LSTM_H96_L1_EmbNoEmb_FC_96_64_32_20260423_125609/20260423/LSTM_H96_L1_EmbNoEmb_FC_96_64_32_20260423_125609_config.json \
+  --output models/onnx_models/LSTM_H96_L1_EmbNoEmb_FC_96_64_32_20260423_125609/LSTM_H96_L1_EmbNoEmb_FC_96_64_32_20260423_125609.onnx
+```
+
+This writes the `.onnx` model plus the input and target scaler `.pkl` files.
+
+#### 5. Run the LSTM Rollout
+
+```bash
+cd /app
+PYTHONPATH=/app python3 src/lstm_eval.py --config configs/lstm_eval_default.yaml
+```
+
+Output:
+
+- `outputs/lstm_eval_logs/*.npz`
+
+#### 6. Run the MPC Rollout
+
+Use a dedicated comparison config rather than editing `collect_mpc_default.yaml`.
+
+```bash
+cd /app
+PYTHONPATH=/app python3 src/collect_mpc_data.py --config configs/collect_mpc_first_comparison.yaml
+```
+
+Typical first-run output:
+
+- `outputs/mpc_set/stmpc_Spielberg_first_comparison.npz`
+- `outputs/mpc_set/stmpc_Spielberg_first_comparison.json`
+
+#### 7. Convert the MPC Dataset Into the Shared Comparison Schema
+
+```bash
+cd /app
+PYTHONPATH=/app python3 src/convert_mpc_to_lstm_log.py --config configs/mpc_compare_default.yaml
+```
+
+Output: `outputs/mpc_eval_logs/*.npz`
+
+#### 8. Compare the Schemas
+
+Use this quick sanity check to verify that the latest LSTM and MPC logs expose the same keys:
+
+```bash
+cd /app
+python3 - <<'PY'
+from pathlib import Path
+import numpy as np
+
+lstm_file = sorted(Path("outputs/lstm_eval_logs").glob("*.npz"))[-1]
+mpc_file = sorted(Path("outputs/mpc_eval_logs").glob("*.npz"))[-1]
+
+for label, path in [("LSTM", lstm_file), ("MPC", mpc_file)]:
+    data = np.load(path, allow_pickle=True)
+    print(f"\n{label}: {path.name}")
+    print("steps:", len(data["step_id"]))
+    print("lidar:", data["lidar"].shape)
+    print("keys:", sorted(data.files))
+PY
+```
+
+The current shared comparison schema is:
+
+- `collision_flag`
+- `completion_flag`
+- `distance_to_goal`
+- `distance_to_start`
+- `goal_center`
+- `goal_radius`
+- `has_left_start_zone`
+- `lidar`
+- `model_name`
+- `speed_command`
+- `start_center`
+- `start_radius`
+- `steering_angle`
+- `step_id`
+- `timestamps`
+- `velocity`
+- `x`
+- `y`
+- `yaw`
+
+#### Quick Validation (5-10 min)
+
+Test a small single-map collection:
+
+```bash
+docker compose run --rm app bash -c "cd /app && PYTHONPATH=/app python src/collect_mpc_data.py --config /app/configs/collect_mpc_test.yaml"
+```
+
+This runs a short smoke test with lidar, perturbations, and DAgger enabled.
 
 #### Single-Map Collection (10-15 min)
 

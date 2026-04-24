@@ -1,0 +1,96 @@
+# MPC Data Collection Configuration FOR COMPARISON
+
+run:
+  episodes: 1               # Number of episodes to collect
+  steps_per_episode: 6000   # Safety timeout in steps (episode should end by lap target before this)
+  render: true              # Render visualization during collection (disable for batch runs)
+  use_default_reset: false  # Use bridge start pose (false) instead of env.reset() default
+  lap_termination:
+    enabled: true              # Terminate episodes when lap count is reached
+    target_laps: 1             # Number of completed laps before terminating episode
+    method: s_wrap             # Lap detection via centerline arclength wrap-around
+    wrap_threshold_ratio: 0.2  # Wrap threshold as fraction of track (0.2 = wrap detected at 80%-to-20% transition)
+    auto_timeout:
+      enabled: true                  # Auto-calculate episode timeout based on expected lap speed
+      timeout_factor: 2.0            # Multiply expected lap time by this factor (if too low, episodes truncate early)
+      min_expected_speed_ratio: 0.5  # Minimum speed assumption for lap-time estimation
+
+env:
+  map: Spielberg   # Map name (must exist in maps/ directory)
+  track_direction: normal  # Track direction: normal or reverse (for data diversity)
+  timestep: 0.01   # Simulation timestep in seconds (0.01s = 100Hz)
+  integrator: rk4  # Integration method: rk4 (recommended, accurate) or euler (faster)
+  model: ks        # Legacy field (collector derives from controller.mode)
+
+controller:
+  mode: stmpc      # Expert controller: kmpc (constant speed) or stmpc (dynamic speed/steering)
+  ref_speed: 4.0  # Reference speed target for MPC (m/s)
+  kmpc:
+    model: ks     # Bicycle model: ks (kinematic single-track)
+    observation_type: kinematic_state  # Obs format: kinematic_state (5-dim) or frenet_dynamic_state
+    speed_profile:
+      enabled: true         # Enable curvature-based speed limiting (safer in corners)
+      a_lat_max: 3.5        # Max lateral acceleration constraint (m/s²) - determines speed in curves
+      min_speed: 1.8        # Minimum speed to maintain (m/s)
+      max_speed: 4.0        # Maximum speed ceiling (m/s)
+      kappa_epsilon: 0.001  # Small constant to avoid division-by-zero for low curvature
+      smoothing_window: 11  # Curvature smoothing window (larger = smoother speed profile)
+  stmpc:
+    training_mode: race           # Single-track MPC mode: race (aggressive) or others
+    model: std                    # Dynamic model: std (standard Pacejka tire model)
+    observation_type: frenet_dynamic_state  # Obs format: Frenet coords + vehicle dynamics
+    use_std_vehicle_params: true  # Use F1TENTH standard parameters (false = custom params dict)
+    startup_speed_offset: 1.5     # Initial speed offset added to ref_speed during reset (m/s)
+    reset_with_states: true       # Initialize vehicle state during reset (delta, yaw_rate, slip)
+    initial_state:
+      delta: 0.0        # Initial steering angle (radians, 0 = straight)
+      speed: 3.0        # Initial longitudinal speed (m/s)
+      yaw_rate: 0.0     # Initial yaw rate (rad/s, angular velocity)
+      slip_angle: 0.0   # Initial slip angle (radians, vehicle sideslip)
+    runtime_tuning:
+      enabled: true     # Enable online cost function weight tuning during collection
+      qalpha: 8.0       # Cost weight for heading alignment (Frenet alpha error)
+      qn: 50.0          # Cost weight for lateral deviation (Frenet n error)
+      qv: 15.0          # Cost weight for speed tracking error
+      qddelta: 1.0      # Cost weight for steering rate limiting
+      qjerk: 0.05       # Cost weight for jerk (acceleration change rate)
+      track_safety_margin: 0.30  # Safety margin to track boundary (meters)
+      v_max: 8.0        # Maximum speed during MPC horizon (m/s)
+      a_max: 3.0        # Maximum acceleration (m/s²)
+      jerk_max: 20.0    # Maximum jerk increase (m/s³)
+      jerk_min: -20.0   # Maximum jerk decrease (m/s³)
+      ddelta_max: 1.8   # Maximum steering rate (rad/s)
+      ddelta_min: -1.8  # Minimum steering rate (rad/s)
+      alat_max: 4.5     # Maximum lateral acceleration (m/s²)
+
+lidar:
+  enabled: true       # Collect lidar scan features in addition to state/action
+  env_num_beams: 360  # Number of simulated lidar beams in environment
+  clip_min: 0.0       # Minimum lidar range value after clipping (meters)
+  clip_max: 15.0      # Maximum lidar range value after clipping (meters) for near-field driving focus
+  store_raw: false    # Also store full-resolution raw scans (larger files)
+  dtype: float16      # Storage dtype for lidar arrays: float16 or float32
+  binning:
+    enabled: true  # Downsample scans before saving
+    n_bins: 60     # Number of pooled lidar bins saved per step
+    method: min    # Pooling method: min (obstacle-sensitive) or mean
+
+path_features:
+  enabled: true                 # Collect centerline curvature lookahead features per transition
+  lookahead_m: [1.0, 2.0, 3.0, 5.0, 8.0]  # Distances ahead (meters) for curvature sampling
+  include_current_kappa: true   # Also save curvature at the current progress anchor
+  dtype: float32                # Storage dtype for path feature arrays: float16 or float32
+
+perturbation:
+  enabled: false               # Enable probabilistic steering shove injection for training diversity
+  probability: 0.2             # Probability of perturbation at each step (0.0-1.0, 0.2 = 20% perturbed)
+  shove_magnitude: 0.3         # Magnitude of steering shove (radians)
+  min_steps_between_shoves: 0  # Minimum steps between perturbations (0 = any, 20+ = cooldown)
+
+dagger:
+  enabled: false              # Enable DAgger-style dual action labeling (record expert + executed actions)
+  record_noise_vectors: true  # Also collect the noise vectors applied (for analysis)
+
+output:
+  output_dir: outputs/mpc_set  # Output directory for raw MPC comparison datasets and JSON metadata
+  output_filename: stmpc_Spielberg_first_comparison.npz          # Optional custom filename (default: auto-generated with map/controller/timestamp)

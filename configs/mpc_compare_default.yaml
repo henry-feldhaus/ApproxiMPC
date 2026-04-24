@@ -1,0 +1,22 @@
+input:
+  dataset_path: outputs/mpc_set/stmpc_Spielberg_first_comparison.npz
+  episode_index: 0
+
+output:
+  output_file: outputs/mpc_eval_logs/mpc_eval_log.npz
+  model_name: stmpc
+
+env:
+  timestep: 0.01
+
+logging:
+  goal_center_x: 0.0
+  goal_center_y: 0.0
+  goal_offset_x: 0.0
+  goal_offset_y: 0.0
+  use_goal_offset: true
+  goal_radius: 1.0
+  start_center_x: 0.0
+  start_center_y: 0.0
+  use_start_pose_as_start_center: true
+  start_radius: 1.0

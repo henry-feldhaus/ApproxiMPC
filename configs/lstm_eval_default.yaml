@@ -16,7 +16,7 @@ env:
   training_mode: race
 
 artifacts:
-  model_config_path: LSTM_training/models/LSTM_H128_L1_EmbNoEmb_FC_128_64_32/20260423/LSTM_H128_L1_EmbNoEmb_FC_128_64_32_config.json
+  model_config_path: LSTM_training/models/LSTM_H96_L1_EmbNoEmb_FC_96_64_32_20260423_125609/20260423/LSTM_H96_L1_EmbNoEmb_FC_96_64_32_20260423_125609_config.json
   onnx_model_path: ""
   input_scaler_path: ""
   target_scaler_path: ""
