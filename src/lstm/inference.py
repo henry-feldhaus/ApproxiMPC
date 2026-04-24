@@ -13,7 +13,6 @@ class LSTMInferenceModel:
     def __init__(self, artifacts: LSTMArtifactBundle):
         self.artifacts = artifacts
         self.model_name = artifacts.model_name
-        self.seq_length = int(artifacts.model_config.get("seq_length", 100))
         self.input_dim = int(artifacts.model_config.get("input_dim", 68))
         self.output_dim = int(artifacts.model_config.get("output_dim", 2))
 
@@ -21,11 +20,24 @@ class LSTMInferenceModel:
         self.target_scaler = joblib.load(artifacts.target_scaler_path)
         self.ort_session = ort.InferenceSession(str(artifacts.onnx_path), providers=["CPUExecutionProvider"])
         self.input_name = self.ort_session.get_inputs()[0].name
+        self.seq_length = self._resolve_seq_length()
 
         self.sequence_buffer = deque(maxlen=self.seq_length)
         zero_step = np.zeros(self.input_dim, dtype=np.float32)
         for _ in range(self.seq_length):
             self.sequence_buffer.append(zero_step.copy())
+
+    def _resolve_seq_length(self) -> int:
+        configured = self.artifacts.model_config.get("seq_length")
+        if configured is not None:
+            return int(configured)
+
+        input_meta = self.ort_session.get_inputs()[0]
+        input_shape = input_meta.shape
+        if len(input_shape) >= 2 and isinstance(input_shape[1], int):
+            return int(input_shape[1])
+
+        return 100
 
     def reset(self) -> None:
         self.sequence_buffer.clear()

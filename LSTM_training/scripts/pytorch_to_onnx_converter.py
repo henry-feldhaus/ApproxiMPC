@@ -21,7 +21,10 @@ def export_to_onnx(config_path, output_path, opset=17, device="cpu"):
     joblib.dump(target_scaler, base + "_target_scaler.pkl")
 
     # Prepare dummy input for export
-    seq_len = cfg["model_config"].get("seq_length", 10)
+    # The trained artifact config does not currently persist seq_length, but the
+    # training pipeline and deployed runtime both use 100 as the intended
+    # baseline history length.
+    seq_len = cfg["model_config"].get("seq_length", 100)
     input_dim = cfg["model_config"].get("input_dim", 63)
     dummy_input = torch.zeros(1, seq_len, input_dim, dtype=torch.float32)
 

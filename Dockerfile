@@ -30,14 +30,18 @@ RUN git clone --recurse-submodules https://github.com/acados/acados.git /opt/aca
 ENV ACADOS_SOURCE_DIR=/opt/acados
 ENV LD_LIBRARY_PATH=/opt/acados/lib:${LD_LIBRARY_PATH}
 
-# Copy only metadata first to maximize layer caching.
+# Copy package metadata and the installable package source first so editable
+# install works even before the full repository is copied.
 COPY pyproject.toml uv.lock* README.md /app/
+COPY gymkhana /app/gymkhana
 
 # Install baseline runtime dependencies from pyproject.
 # Add optional render dependencies for GUI.
+# Add LSTM inference/runtime dependencies used by src/lstm_eval.py.
 # Install -e . first (which pulls core deps), then pin numpy last to ensure it stays <1.25.
 RUN pip install --no-cache-dir -e . \
     && pip install --no-cache-dir pyqtgraph PyQt6 \
+    && pip install --no-cache-dir "onnxruntime>=1.12,<1.24" "onnx>=1.20.1,<2.0.0" scikit-learn joblib \
     && pip install --no-cache-dir --force-reinstall "numpy<1.25"
 
 # Gymnasium imports Atari wrappers by default, which pulls cv2 at import time.
@@ -101,4 +105,3 @@ PY
 COPY . /app
 
 CMD ["bash"]
-
