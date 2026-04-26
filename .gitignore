@@ -205,3 +205,5 @@ figures/tests/
 
 # ROS2 bags for analysis
 examples/analysis/bags
+# Local working notes
+docs/.codex-notes/
