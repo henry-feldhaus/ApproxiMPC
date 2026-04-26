@@ -1,0 +1,58 @@
+# Full-scale MPC data collection orchestrator for LSTM training
+# This config runs multi-map sweeps with perturbations enabled.
+
+base_collector_config: configs/collect_mpc_default.yaml  # Base config to extend (overrides applied below)
+
+run:
+  maps:  # Maps to collect from (order matters for alternating directions)
+    - IMS
+    - Drift2
+    - BrandsHatch
+    - Spielberg
+    - MexicoCity
+  directions:  # Directions to sweep (order alternates per map)
+    - normal
+  episodes_per_combo: 2              # Episodes per (map, direction) combination
+  render: true                       # Disable rendering for unattended batch runs
+  video:
+    enabled: true                    # Save renderer output to MP4 files next to each dataset
+    views:
+      - global                       # Full-track view
+      - follow                       # Zoomed follow-car view
+    fps: 30                          # Presentation-friendly video frame rate
+    frame_stride: 3                  # Record every 3 sim steps (~33 Hz source at 0.01s timestep)
+  stop_on_error: false                # Continue on failure (skip failed combo, continue to next)
+  retry_until_success: false           # Retry failed episodes until each combo reaches target episode count
+  max_attempts_per_combo: 30          # Max retries per combo. Prevents infinite loops
+
+execution:
+  mode: single              # Parallel execution with isolated per-worker acados build artifacts
+  max_workers: 4              # Max concurrent workers (CPU substantial)
+
+output:
+  root_dir: outputs/datasets/validation  # Root directory for all multimap outputs
+  run_name: 5_map_performance_validation   # Auto-generate UTC timestamp name (e.g., run_20260409T174503Z)
+
+# Deep merge these overrides into base_collector_config for training mode
+collector_overrides:
+  lidar:
+    enabled: true             # Enable lidar collection in production run
+    env_num_beams: 360        # Simulated lidar beam count
+    clip_min: 0.0             # Minimum clipped lidar range (meters)
+    clip_max: 15.0            # Maximum clipped lidar range (meters) for near-field racing focus
+    store_raw: false          # Keep files manageable at full scale
+    dtype: float16            # Compact lidar storage format
+    binning:
+      enabled: true           # Enable downsampling
+      n_bins: 60              # Saved bins per lidar scan
+      method: min             # Min pooling emphasizes nearby obstacles
+  perturbation:
+    enabled: false             # ENABLE perturbations for training diversity
+    probability: 0.25         # Stable qualitative setting
+    shove_magnitude: 0.15     # Stable qualitative setting
+    min_steps_between_shoves: 500  # Stable qualitative setting
+    hold_steps_min: 5         # Persistent disturbance duration lower bound (steps)
+    hold_steps_max: 25        # Persistent disturbance duration upper bound (steps)
+  dagger:
+    enabled: false             # ENABLE DAgger dual-action labeling
+    record_noise_vectors: false # Record noise vectors for recovery supervision

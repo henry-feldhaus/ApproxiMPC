@@ -81,6 +81,7 @@ def run_combo(
     direction: str,
     episodes_to_run: int,
     render: bool,
+    video_cfg: dict | None,
     combo_output_dir: Path,
     output_filename: str | None = None,
 ) -> subprocess.CompletedProcess:
@@ -93,6 +94,8 @@ def run_combo(
     cfg["env"]["track_direction"] = direction
     cfg["run"]["episodes"] = int(episodes_to_run)
     cfg["run"]["render"] = bool(render)
+    if video_cfg is not None:
+        cfg["run"]["video"] = copy.deepcopy(video_cfg)
     cfg["output"]["output_dir"] = str(combo_output_dir)
     if output_filename is None:
         output_filename = f"{cfg['controller']['mode']}_{map_name}_{direction}.npz"
@@ -271,6 +274,7 @@ def main() -> None:
     directions = ensure_list_of_strings("run.directions", run_cfg.get("directions", []))
     episodes_per_combo = int(run_cfg.get("episodes_per_combo", 1))
     render = bool(run_cfg.get("render", False))
+    video_cfg = copy.deepcopy(run_cfg.get("video")) if "video" in run_cfg else None
     stop_on_error = bool(run_cfg.get("stop_on_error", True))
     retry_until_success = bool(run_cfg.get("retry_until_success", True))
     max_attempts_per_combo = int(run_cfg.get("max_attempts_per_combo", episodes_per_combo * 3))
@@ -296,6 +300,7 @@ def main() -> None:
         "directions": directions,
         "episodes_per_combo": episodes_per_combo,
         "render": render,
+        "video": video_cfg,
         "retry_until_success": retry_until_success,
         "max_attempts_per_combo": max_attempts_per_combo,
         "combos": [],
@@ -347,6 +352,7 @@ def main() -> None:
                 direction=direction,
                 episodes_to_run=episodes_per_combo,
                 render=render,
+                video_cfg=video_cfg,
                 combo_output_dir=combo_output_dir,
                 output_filename=canonical_filename,
             )
@@ -381,6 +387,7 @@ def main() -> None:
                 direction=direction,
                 episodes_to_run=1,
                 render=render,
+                video_cfg=video_cfg,
                 combo_output_dir=combo_output_dir,
                 output_filename=attempt_filename,
             )

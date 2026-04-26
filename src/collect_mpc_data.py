@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import cv2
 import gymnasium as gym
 import numpy as np
 import yaml
@@ -33,6 +34,63 @@ FEATURE_NAMES = [
 ]
 
 ACTION_NAMES = ["steering_angle", "speed"]
+
+VIDEO_VIEW_NAMES = {"global", "follow"}
+
+
+class VideoRecorder:
+    """Lazy OpenCV MP4 writer for RGB frames returned by env.render()."""
+
+    def __init__(self, path: Path, fps: float):
+        self.requested_path = path
+        self.path = path
+        self.fps = float(fps)
+        self.writer = None
+        self.codec = None
+
+    def write(self, frame: np.ndarray) -> None:
+        if frame is None:
+            return
+        if frame.dtype != np.uint8:
+            frame = np.clip(frame, 0, 255).astype(np.uint8)
+        frame = np.ascontiguousarray(frame)
+
+        height, width = frame.shape[:2]
+        if self.writer is None:
+            self._open(width, height)
+
+        self.writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
+    def _open(self, width: int, height: int) -> None:
+        if hasattr(cv2, "setLogLevel"):
+            cv2.setLogLevel(0)
+        candidates = [
+            (self.requested_path, "mp4v"),
+            (self.requested_path, "avc1"),
+            (self.requested_path, "H264"),
+            (self.requested_path.with_suffix(".avi"), "MJPG"),
+        ]
+        for path, codec in candidates:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*codec), self.fps, (width, height))
+            if writer.isOpened():
+                self.path = path
+                self.codec = codec
+                self.writer = writer
+                if path != self.requested_path:
+                    print(
+                        f"WARNING: MP4 writer unavailable; recording {self.requested_path.name} "
+                        f"as {path.name} with codec={codec}"
+                    )
+                return
+            writer.release()
+
+        raise RuntimeError(f"Failed to open video writer: {self.requested_path}")
+
+    def close(self) -> None:
+        if self.writer is not None:
+            self.writer.release()
+            self.writer = None
 
 
 class LapTracker:
@@ -192,6 +250,49 @@ def get_path_feature_config(cfg: dict) -> dict:
     }
 
 
+def get_video_config(cfg: dict, timestep: float) -> dict:
+    """Normalize optional render-to-video settings."""
+    video_cfg = cfg.get("run", {}).get("video", {})
+    enabled = bool(video_cfg.get("enabled", False))
+
+    views_raw = video_cfg.get("views", ["global"])
+    if isinstance(views_raw, str):
+        views = [views_raw]
+    elif isinstance(views_raw, list):
+        views = [str(v).lower().strip() for v in views_raw]
+    else:
+        raise ValueError("run.video.views must be a string or list of strings")
+
+    if not views:
+        raise ValueError("run.video.views must contain at least one view")
+    invalid = [v for v in views if v not in VIDEO_VIEW_NAMES]
+    if invalid:
+        raise ValueError(
+            f"run.video.views contains unsupported values {invalid}; "
+            f"use one of {sorted(VIDEO_VIEW_NAMES)}"
+        )
+
+    fps = float(video_cfg.get("fps", 30.0))
+    if fps <= 0.0:
+        raise ValueError("run.video.fps must be > 0")
+
+    sim_fps = 1.0 / float(timestep)
+    frame_stride_raw = video_cfg.get("frame_stride", None)
+    if frame_stride_raw is None:
+        frame_stride = max(1, int(round(sim_fps / fps)))
+    else:
+        frame_stride = int(frame_stride_raw)
+        if frame_stride <= 0:
+            raise ValueError("run.video.frame_stride must be > 0")
+
+    return {
+        "enabled": enabled,
+        "views": views,
+        "fps": fps,
+        "frame_stride": frame_stride,
+    }
+
+
 def get_stmpc_reset_config(stmpc_cfg: dict, ref_speed: float) -> dict:
     """Build STMPC reset configuration."""
     init_cfg = stmpc_cfg.get("initial_state", {})
@@ -245,6 +346,31 @@ def count_by_value(values: list[str]) -> dict[str, int]:
     for val in values:
         counts[val] = counts.get(val, 0) + 1
     return counts
+
+
+def set_render_view(env: gym.Env, view: str) -> None:
+    """Force supported renderers into a named camera view before grabbing a frame."""
+    renderer = getattr(env.unwrapped, "renderer", None)
+    if renderer is None:
+        return
+
+    if view == "global":
+        renderer.follow_agent_flag = False
+        renderer.agent_to_follow = None
+        renderer.active_map_renderer = "map"
+    elif view == "follow":
+        renderer.follow_agent_flag = True
+        renderer.agent_to_follow = 0
+        renderer.active_map_renderer = "car"
+    else:
+        raise ValueError(f"Unsupported render view: {view}")
+
+
+def write_video_frames(env: gym.Env, recorders: dict[str, VideoRecorder]) -> None:
+    """Render and append one frame for each requested view."""
+    for view, recorder in recorders.items():
+        set_render_view(env, view)
+        recorder.write(env.render())
 
 
 def get_collect_env_config(cfg: dict, max_episode_steps: int, controller_cfg: dict, lidar_cfg: dict) -> dict:
@@ -436,6 +562,7 @@ def main() -> None:
     lidar_cfg = get_lidar_config(cfg, controller_cfg)
     path_cfg = get_path_feature_config(cfg)
     lap_cfg = get_lap_termination_config(cfg["run"])
+    video_cfg = get_video_config(cfg, float(cfg["env"].get("timestep", 0.01)))
     if lap_cfg["method"] != "s_wrap":
         print(f"WARNING: Unsupported lap_termination.method='{lap_cfg['method']}', using 's_wrap'")
         lap_cfg["method"] = "s_wrap"
@@ -443,6 +570,15 @@ def main() -> None:
     # Override render from CLI if specified
     if args.render:
         cfg["run"]["render"] = True
+
+    output_dir = Path(cfg["output"]["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if "output_filename" in cfg["output"] and cfg["output"]["output_filename"]:
+        out_path = output_dir / cfg["output"]["output_filename"]
+    else:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out_path = output_dir / f"{controller_cfg['mode']}_{cfg['env']['map']}_{ts}.npz"
 
     print(f"Loaded config from: {config_path}")
     print(f"Collection settings: {cfg['run']['episodes']} episodes, {cfg['run']['steps_per_episode']} max steps per")
@@ -470,10 +606,16 @@ def main() -> None:
             f"enabled=True, lookahead_m={path_cfg['lookahead_m'].tolist()}, "
             f"include_current_kappa={path_cfg['include_current_kappa']}, dtype={path_cfg['dtype']}"
         )
+    if video_cfg["enabled"]:
+        print(
+            "Video recording: "
+            f"enabled=True, views={video_cfg['views']}, fps={video_cfg['fps']:.1f}, "
+            f"frame_stride={video_cfg['frame_stride']}"
+        )
 
     # Initialize environment
     env_config = get_collect_env_config(cfg, cfg["run"]["steps_per_episode"], controller_cfg, lidar_cfg)
-    render_mode = "human" if cfg["run"]["render"] else None
+    render_mode = "rgb_array" if video_cfg["enabled"] else "human" if cfg["run"]["render"] else None
     env = gym.make("gymkhana:gymkhana-v0", config=env_config, render_mode=render_mode)
     if controller_cfg["mode"] == "stmpc":
         stmpc_cfg = controller_cfg["stmpc"]
@@ -593,6 +735,12 @@ def main() -> None:
     path_s_anchor = [] if path_cfg["enabled"] else None
     path_centerline_idx_anchor = [] if path_cfg["enabled"] else None
     path_kappa_current = [] if path_cfg["enabled"] and path_cfg["include_current_kappa"] else None
+    video_recorders = {}
+    if video_cfg["enabled"]:
+        video_recorders = {
+            view: VideoRecorder(out_path.with_name(f"{out_path.stem}_{view}.mp4"), video_cfg["fps"])
+            for view in video_cfg["views"]
+        }
 
     try:
         global_step = 0  # Track global step count across episodes
@@ -681,7 +829,9 @@ def main() -> None:
                 last_collision = bool(info.get("collision", False))
                 last_boundary = bool(info.get("boundary_exceeded", False))
 
-                if cfg["run"]["render"]:
+                if video_recorders and global_step % video_cfg["frame_stride"] == 0:
+                    write_video_frames(env, video_recorders)
+                elif cfg["run"]["render"]:
                     env.render()
 
                 # Record transition
@@ -743,18 +893,20 @@ def main() -> None:
             )
 
     finally:
+        for recorder in video_recorders.values():
+            recorder.close()
         env.close()
 
+    video_paths = {
+        view: str(recorder.path)
+        for view, recorder in video_recorders.items()
+    } if video_cfg["enabled"] else {}
+    video_codecs = {
+        view: recorder.codec
+        for view, recorder in video_recorders.items()
+    } if video_cfg["enabled"] else {}
+
     # Save dataset
-    output_dir = Path(cfg["output"]["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    if "output_filename" in cfg["output"] and cfg["output"]["output_filename"]:
-        out_path = output_dir / cfg["output"]["output_filename"]
-    else:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        out_path = output_dir / f"{controller_cfg['mode']}_{cfg['env']['map']}_{ts}.npz"
-
     # Stack arrays
     obs_arr = np.stack(observations).astype(np.float32)
     next_obs_arr = np.stack(next_observations).astype(np.float32)
@@ -910,6 +1062,14 @@ def main() -> None:
             "raw_lidar_shape": list(raw_lidar_arr.shape) if raw_lidar_arr is not None else None,
             "next_raw_lidar_shape": list(raw_lidar_next_arr.shape) if raw_lidar_next_arr is not None else None,
         },
+        "video": {
+            "enabled": video_cfg["enabled"],
+            "views": video_cfg["views"],
+            "fps": video_cfg["fps"],
+            "frame_stride": video_cfg["frame_stride"],
+            "paths": video_paths,
+            "codecs": video_codecs,
+        },
     }
 
     if path_cfg["enabled"] and path_curvature_lookahead_arr is not None:
@@ -933,6 +1093,9 @@ def main() -> None:
 
     print(f"\nDataset saved: {out_path}")
     print(f"Metadata saved: {meta_path}")
+    if video_cfg["enabled"]:
+        for view, path in video_paths.items():
+            print(f"Video saved ({view}): {path}")
     print(
         f"Total transitions: {obs_arr.shape[0]} "
         f"({int(np.sum(perturbed_arr))} perturbed, {int(np.sum(~perturbed_arr))} clean)"
