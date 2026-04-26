@@ -15,6 +15,13 @@ mpc_datasets/
 viz/
 models/
 
+LSTM_training/data/latency_validation_data/*
+!LSTM_training/data/latency_validation_data/.gitkeep
+
+LSTM_training/data/raceline_validation_data/*
+!LSTM_training/data/raceline_validation_data/.gitkeep
+
+
 # C extensions
 *.so
 
